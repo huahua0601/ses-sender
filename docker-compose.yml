@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  backend:
+    build: ./backend
+    container_name: ses-sender-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - AWS_REGION=us-east-1
+      - DATABASE_URL=sqlite:///./ses_sender.db
+    volumes:
+      - ./backend/ses_sender.db:/app/ses_sender.db
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    container_name: ses-sender-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    depends_on:
+      - backend
+    restart: unless-stopped
