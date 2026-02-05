@@ -51,7 +51,8 @@ export default function Home() {
   );
 }
 
-const API_BASE = "http://localhost:8000";
+// 使用环境变量配置后端 API 地址，方便部署到不同环境
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 function IdentitiesManager() {
   const [identities, setIdentities] = useState([]);

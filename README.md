@@ -58,15 +58,40 @@ npm run dev
 
 ## 配置
 
+### 环境变量
+
+复制 `.env.example` 为 `.env` 并修改：
+
+```bash
+cp .env.example .env
+```
+
+```env
+# AWS 区域
+AWS_REGION=us-east-1
+
+# 后端 API 地址 (前端访问后端的地址)
+# 本地开发: http://localhost:8000
+# 服务器部署: http://your-server-ip:8000 或 https://api.yourdomain.com
+NEXT_PUBLIC_API_URL=http://your-server-ip:8000
+```
+
+### 部署到服务器
+
+部署到服务器时，需要将 `NEXT_PUBLIC_API_URL` 设置为服务器的公网 IP 或域名：
+
+```bash
+# 方式1: 使用 .env 文件
+echo "NEXT_PUBLIC_API_URL=http://your-server-ip:8000" > .env
+docker-compose up -d --build
+
+# 方式2: 命令行传递
+NEXT_PUBLIC_API_URL=http://your-server-ip:8000 docker-compose up -d --build
+```
+
 ### AWS 凭证
 
 本项目使用 EC2 IAM Role 进行 AWS 认证，无需配置 AK/SK。
-
-如需手动配置，编辑 `backend/.env`:
-```env
-AWS_REGION=us-east-1
-DATABASE_URL=sqlite:///./ses_sender.db
-```
 
 ### IAM 权限要求
 

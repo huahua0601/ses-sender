@@ -6,7 +6,12 @@ __pycache__/
 .Python
 venv/
 ENV/
+
+# Environment files (keep .env.example)
 .env
+.env.local
+.env.*.local
+backend/.env
 
 # Database
 *.db
