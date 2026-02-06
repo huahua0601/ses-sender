@@ -28,12 +28,12 @@ function ToastProvider({children}:{children:React.ReactNode}) {
 }
 
 // ===== Confirm =====
-const ConfirmCtx = createContext<{confirm:(t:string,m:string)=>Promise<boolean>}>({confirm:async()=>false});
+const ConfirmCtx = createContext<{confirm:(t:string,m:string,btn?:string)=>Promise<boolean>}>({confirm:async()=>false});
 const useConfirm = () => useContext(ConfirmCtx);
 
 function ConfirmProvider({children}:{children:React.ReactNode}) {
-  const [s,setS]=useState({open:false,title:"",msg:""}); const ref=React.useRef<(v:boolean)=>void>();
-  const confirm=useCallback((title:string,msg:string):Promise<boolean>=>new Promise(r=>{ref.current=r;setS({open:true,title,msg});}),[]);
+  const [s,setS]=useState({open:false,title:"",msg:"",btn:"确认"}); const ref=React.useRef<(v:boolean)=>void>();
+  const confirm=useCallback((title:string,msg:string,btn="确认"):Promise<boolean>=>new Promise(r=>{ref.current=r;setS({open:true,title,msg,btn});}),[]);
   const yes=()=>{ref.current?.(true);setS(s=>({...s,open:false}));}; const no=()=>{ref.current?.(false);setS(s=>({...s,open:false}));};
   return <ConfirmCtx.Provider value={{confirm}}>{children}
     {s.open&&<div className="fixed inset-0 z-[9999] flex items-center justify-center animate-fade-in">
@@ -42,7 +42,7 @@ function ConfirmProvider({children}:{children:React.ReactNode}) {
         <div className="p-6"><h3 className="text-lg font-bold text-gray-800">{s.title}</h3><p className="text-sm text-gray-500 mt-2 whitespace-pre-line">{s.msg}</p></div>
         <div className="flex justify-end gap-2 px-6 py-4 border-t border-gray-100">
           <button onClick={no} className="px-4 py-2 text-sm rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">取消</button>
-          <button onClick={yes} className="px-4 py-2 text-sm rounded-lg bg-red-500 text-white hover:bg-red-600">确认删除</button>
+          <button onClick={yes} className="px-4 py-2 text-sm rounded-lg bg-red-500 text-white hover:bg-red-600">{s.btn}</button>
         </div>
       </div>
     </div>}
@@ -62,9 +62,51 @@ export default function Home() {
 }
 
 // ===== Login =====
+// ===== Captcha =====
+function useSimpleCaptcha() {
+  const [code,setCode]=useState(""); const [canvas,setCanvas]=useState<HTMLCanvasElement|null>(null);
+  const generate=useCallback(()=>{
+    const chars="ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+    let c=""; for(let i=0;i<4;i++) c+=chars[Math.floor(Math.random()*chars.length)];
+    setCode(c);
+    if(canvas){
+      const ctx=canvas.getContext("2d"); if(!ctx)return;
+      const w=canvas.width, h=canvas.height;
+      // 背景
+      ctx.fillStyle="#f0f0f0"; ctx.fillRect(0,0,w,h);
+      // 干扰线
+      for(let i=0;i<4;i++){ctx.strokeStyle=`hsl(${Math.random()*360},50%,70%)`; ctx.beginPath(); ctx.moveTo(Math.random()*w,Math.random()*h); ctx.lineTo(Math.random()*w,Math.random()*h); ctx.stroke();}
+      // 干扰点
+      for(let i=0;i<30;i++){ctx.fillStyle=`hsl(${Math.random()*360},40%,70%)`; ctx.fillRect(Math.random()*w,Math.random()*h,2,2);}
+      // 文字
+      for(let i=0;i<c.length;i++){
+        ctx.save();
+        ctx.font=`${20+Math.random()*6}px "Courier New", monospace`;
+        ctx.fillStyle=`hsl(${Math.random()*360},70%,35%)`;
+        ctx.translate(18+i*26, 28+Math.random()*6);
+        ctx.rotate((Math.random()-0.5)*0.4);
+        ctx.fillText(c[i],0,0);
+        ctx.restore();
+      }
+    }
+  },[canvas]);
+  const ref=useCallback((el:HTMLCanvasElement|null)=>{setCanvas(el);},[]);
+  useEffect(()=>{if(canvas)generate();},[canvas,generate]);
+  const verify=(input:string)=>input.toLowerCase()===code.toLowerCase();
+  return {ref,generate,verify};
+}
+
 function LoginPage({onLogin}) {
-  const [u,setU]=useState("");const [p,setP]=useState("");const [err,setErr]=useState("");const [ld,setLd]=useState(false);
-  const go=async(e)=>{e.preventDefault();setErr("");setLd(true);try{await onLogin(u,p);}catch(e){setErr(e.message);}finally{setLd(false);}};
+  const [u,setU]=useState("");const [p,setP]=useState("");const [captchaInput,setCaptchaInput]=useState("");
+  const [err,setErr]=useState("");const [ld,setLd]=useState(false);
+  const captcha=useSimpleCaptcha();
+
+  const go=async(e)=>{
+    e.preventDefault(); setErr("");
+    if(!captcha.verify(captchaInput)){setErr("验证码错误");captcha.generate();setCaptchaInput("");return;}
+    setLd(true);try{await onLogin(u,p);}catch(e){setErr(e.message);captcha.generate();setCaptchaInput("");}finally{setLd(false);}
+  };
+
   return <div className="min-h-screen flex items-center justify-center" style={{background:"linear-gradient(135deg,#3C50E0 0%,#6366F1 50%,#8B5CF6 100%)"}}>
     <div className="bg-white rounded-2xl shadow-2xl p-8 w-full" style={{maxWidth:400}}>
       <div className="text-center mb-8"><div className="w-12 h-12 rounded-xl bg-indigo-600 flex items-center justify-center mx-auto mb-3"><span className="text-white text-xl font-bold">S</span></div><h1 className="text-2xl font-bold text-gray-800">SES Sender</h1><p className="text-gray-400 text-sm mt-1">邮件批量发送管理平台</p></div>
@@ -72,6 +114,14 @@ function LoginPage({onLogin}) {
         {err&&<div className="bg-red-50 border border-red-200 text-red-600 text-sm rounded-lg p-3">{err}</div>}
         <div><label className="text-sm font-medium text-gray-700 mb-1.5 block">用户名</label><input className="w-full h-11 px-4 border border-gray-200 rounded-lg text-gray-800 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 transition" value={u} onChange={e=>setU(e.target.value)}/></div>
         <div><label className="text-sm font-medium text-gray-700 mb-1.5 block">密码</label><input type="password" className="w-full h-11 px-4 border border-gray-200 rounded-lg text-gray-800 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 transition" value={p} onChange={e=>setP(e.target.value)}/></div>
+        <div>
+          <label className="text-sm font-medium text-gray-700 mb-1.5 block">验证码</label>
+          <div className="flex gap-3">
+            <input className="flex-1 h-11 px-4 border border-gray-200 rounded-lg text-gray-800 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 transition tracking-widest" placeholder="请输入验证码" value={captchaInput} onChange={e=>setCaptchaInput(e.target.value)} autoComplete="off"/>
+            <canvas ref={captcha.ref} width={120} height={40} onClick={captcha.generate} className="rounded-lg cursor-pointer border border-gray-200 flex-shrink-0 hover:opacity-80 transition" title="点击刷新验证码"/>
+          </div>
+          <p className="text-xs text-gray-400 mt-1">点击图片可刷新验证码</p>
+        </div>
         <button type="submit" disabled={ld} className="w-full h-11 rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700 disabled:opacity-50 transition">{ld?"登录中...":"登 录"}</button>
       </form>
     </div>
@@ -186,7 +236,8 @@ function AdminUsers() {
 
   const load=async()=>{setUsers(await(await fetch(`${API}/admin/users`,{headers:authH(token)})).json());}; useEffect(()=>{load();},[]);
   const create=async()=>{if(!f.username||!f.password||!f.email)return toast("warning","请填写完整信息");const r=await fetch(`${API}/admin/users`,{method:"POST",headers:authH(token),body:JSON.stringify(f)});if(r.ok){toast("success","用户创建成功");setShowCreate(false);load();}else{const e=await r.json();toast("error","失败",e.detail);}};
-  const toggle=async(u)=>{await fetch(`${API}/admin/users/${u.id}`,{method:"PUT",headers:authH(token),body:JSON.stringify({is_active:!u.is_active})});load();};
+  const {confirm:cfm}=useConfirm();
+  const toggle=async(u)=>{const action=u.is_active?"禁用":"启用";if(!await cfm(`${action}用户`,`确定${action}用户「${u.username}」？`))return;await fetch(`${API}/admin/users/${u.id}`,{method:"PUT",headers:authH(token),body:JSON.stringify({is_active:!u.is_active})});load();};
 
   const openEdit=(u)=>{setEditUser(u);setEditEmail(u.email||"");setEditName(u.display_name||"");setNewPwd("");setShowEdit(true);};
   const saveEdit=async()=>{
@@ -316,13 +367,13 @@ function UserGroups() {
   const addG=async()=>{if(!ng)return toast("warning","请输入客群名称");await fetch(`${API}/groups`,{method:"POST",headers:authH(token),body:JSON.stringify({name:ng,description:ngDesc})});toast("success","客群创建成功");setNg("");setNgDesc("");setShowAddGroup(false);loadG(1,gS);};
   const openEditG=(g)=>{setEditGroupId(g.id);setNg(g.name);setNgDesc(g.description||"");setShowEditGroup(true);};
   const updateG=async()=>{if(!ng)return toast("warning","请输入客群名称");const r=await fetch(`${API}/groups/${editGroupId}`,{method:"PUT",headers:authH(token),body:JSON.stringify({name:ng,description:ngDesc})});if(r.ok){toast("success","客群已更新");setShowEditGroup(false);loadG(gP,gS);}else{const e=await r.json();toast("error","更新失败",e.detail);}};
-  const delG=async(id)=>{if(!await cfm("删除客群","将删除此客群及其所有联系人，不可恢复。"))return;await fetch(`${API}/groups/${id}`,{method:"DELETE",headers:authH(token)});if(sel===id){setSel(null);setCs([]);}loadG(gP,gS);};
+  const delG=async(g)=>{if(!await cfm("删除客群",`确定删除客群「${g.name}」及其所有 ${g.contact_count} 个联系人？\n此操作不可恢复。`,"确认删除"))return;await fetch(`${API}/groups/${g.id}`,{method:"DELETE",headers:authH(token)});if(sel===g.id){setSel(null);setCs([]);}loadG(gP,gS);};
 
   const updR=(i,f,v)=>{const r=[...rows];r[i][f]=v;setRows(r);};
   const addR=()=>setRows([...rows,{name:"",email:""}]);
   const rmR=(i)=>{if(rows.length>1)setRows(rows.filter((_,j)=>j!==i));};
   const saveC=async()=>{const v=rows.filter(r=>r.email.trim());if(!v.length)return toast("warning","请至少填写一个邮箱");for(const r of v)await fetch(`${API}/contacts`,{method:"POST",headers:authH(token),body:JSON.stringify({name:r.name.trim(),email:r.email.trim(),group_id:sel})});toast("success",`已添加 ${v.length} 个联系人`);setRows([{name:"",email:""}]);setShowAddContact(false);loadC(sel,cP,cS);loadG(gP,gS);};
-  const delC=async(id)=>{await fetch(`${API}/contacts/${id}`,{method:"DELETE",headers:authH(token)});loadC(sel,cP,cS);loadG(gP,gS);};
+  const delC=async(c)=>{if(!await cfm("删除联系人",`确定删除联系人「${c.name||c.email}」？\n邮箱: ${c.email}`,"确认删除"))return;await fetch(`${API}/contacts/${c.id}`,{method:"DELETE",headers:authH(token)});loadC(sel,cP,cS);loadG(gP,gS);};
 
   const dlTpl=()=>window.open(`${API}/contacts/template/download?token=${token}`,"_blank");
   const dlCs=()=>{if(sel)window.open(`${API}/groups/${sel}/contacts/download?token=${token}`,"_blank");};
@@ -371,7 +422,7 @@ function UserGroups() {
           <span className={`text-sm ${sel===g.id?"font-semibold":""}`}>{g.name} <span className="text-xs text-gray-400">({g.contact_count})</span></span>
           <div className="flex gap-1">
             <Btn variant="outline" size="sm" onClick={e=>{e.stopPropagation();openEditG(g);}}>编辑</Btn>
-            <Btn variant="danger" size="sm" onClick={e=>{e.stopPropagation();delG(g.id);}}>删除</Btn>
+            <Btn variant="danger" size="sm" onClick={e=>{e.stopPropagation();delG(g);}}>删除</Btn>
           </div>
         </div>)}{gs.length===0&&<p className="text-center py-8 text-sm text-gray-400">暂无客群</p>}</div>
         <Pager page={gP} totalPages={gTP} total={gT} onPageChange={p=>loadG(p,gS)}/>
@@ -380,7 +431,7 @@ function UserGroups() {
       {/* 右：联系人 */}
       <div className="lg:col-span-2"><Card title={sel?`联系人管理`:"请选择一个客群"} extra={sel&&<div className="flex gap-2">
         <Btn variant="outline" size="sm" onClick={dlTpl}>下载模版</Btn>
-        <label><Btn variant="outline" size="sm" className="cursor-pointer">Excel导入</Btn><input type="file" accept=".xlsx,.xls" className="hidden" onChange={ulCs}/></label>
+        <label className="inline-flex items-center justify-center font-medium rounded-lg transition h-8 px-3 text-xs border border-gray-200 text-gray-600 hover:bg-gray-50 bg-white cursor-pointer">Excel导入<input type="file" accept=".xlsx,.xls" className="hidden" onChange={ulCs}/></label>
         <Btn variant="outline" size="sm" onClick={dlCs}>导出Excel</Btn>
         <Btn variant="success" size="sm" onClick={()=>{setRows([{name:"",email:""}]);setShowAddContact(true);}}>+ 添加联系人</Btn>
       </div>}>
@@ -391,7 +442,7 @@ function UserGroups() {
             <tbody>{cs.map(c=><tr key={c.id} className="border-b border-gray-50 hover:bg-gray-50/50 transition">
               <td className="py-3 px-4 text-sm text-gray-800">{c.name}</td>
               <td className="py-3 px-4 text-sm text-gray-500">{c.email}</td>
-              <td className="py-3 px-4"><Btn variant="danger" size="sm" onClick={()=>delC(c.id)}>删除</Btn></td>
+              <td className="py-3 px-4"><Btn variant="danger" size="sm" onClick={()=>delC(c)}>删除</Btn></td>
             </tr>)}</tbody>
           </table></div>
           {cs.length===0&&<p className="text-center py-8 text-sm text-gray-400">暂无联系人</p>}
@@ -434,7 +485,7 @@ function TemplateManager({apiPrefix}:{apiPrefix:string}) {
     else{const e=await r.json();toast("error","更新失败",e.detail);}
   };
 
-  const del=async(t)=>{if(!await cfm("删除模版",`确定删除「${t.name}」？不可恢复。`))return;const r=await fetch(`${API}${apiPrefix}/${t.id}`,{method:"DELETE",headers:authH(token)});if(r.ok){toast("success","已删除");load();}else{const e=await r.json();toast("error","失败",e.detail);}};
+  const del=async(t)=>{if(!await cfm("删除模版",`确定删除「${t.name}」？不可恢复。`,"确认删除"))return;const r=await fetch(`${API}${apiPrefix}/${t.id}`,{method:"DELETE",headers:authH(token)});if(r.ok){toast("success","已删除");load();}else{const e=await r.json();toast("error","失败",e.detail);}};
 
   return <>
     {/* 新建弹框 */}
