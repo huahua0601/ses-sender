@@ -1,49 +1,81 @@
-import os
-from fastapi import FastAPI, HTTPException, Depends
+"""
+SES Sender API - 应用入口
+
+业务域划分:
+  - auth      认证域: 用户登录、用户管理
+  - identity  发送实体域: SES 邮箱/域名验证
+  - template  邮件模版域: SES 模版 CRUD
+  - audience  客群域: 客群管理、联系人管理、Excel 导入导出
+  - sending   邮件发送域: 测试邮件、批量发送
+"""
+
+import sys
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, EmailStr
-from typing import List, Optional
-import boto3
-from dotenv import load_dotenv
-from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, Text
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session, relationship
+from alembic.config import Config as AlembicConfig
+from alembic import command as alembic_command
+from alembic.script import ScriptDirectory
+from alembic.runtime.migration import MigrationContext
 
-load_dotenv()
+from core.database import engine, SessionLocal
+from domain.auth.service import init_default_admin
 
-# --- Database Setup ---
-DATABASE_URL = os.getenv("DATABASE_URL", "mysql+pymysql://ses_sender:ses_sender_123@localhost:3306/ses_sender")
+# 导入所有 models，确保 Alembic 能发现它们
+from domain.auth import models as _auth_models        # noqa: F401
+from domain.audience import models as _audience_models  # noqa: F401
 
-# 根据数据库类型配置连接参数
-if DATABASE_URL.startswith("sqlite"):
-    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
-else:
-    engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_recycle=3600)
+# 导入各域路由
+from domain.auth.router import router as auth_router
+from domain.identity.router import router as identity_router
+from domain.template.router import router as template_router
+from domain.audience.router import router as audience_router
+from domain.sending.router import router as sending_router
 
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
 
-class ContactGroup(Base):
-    __tablename__ = "contact_groups"
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(255), unique=True, index=True)
-    description = Column(String(500))
-    contacts = relationship("Contact", back_populates="group")
+# --- Alembic 迁移检查 & 自动升级 ---
+def check_and_run_migrations():
+    """启动时检查数据库迁移版本，若不是最新则自动执行 upgrade head"""
+    alembic_cfg = AlembicConfig("alembic.ini")
 
-class Contact(Base):
-    __tablename__ = "contacts"
-    id = Column(Integer, primary_key=True, index=True)
-    email = Column(String(255), index=True)
-    name = Column(String(255))
-    group_id = Column(Integer, ForeignKey("contact_groups.id"))
-    group = relationship("ContactGroup", back_populates="contacts")
+    # 获取脚本目录中的最新版本
+    script = ScriptDirectory.from_config(alembic_cfg)
+    head_revision = script.get_current_head()
 
-Base.metadata.create_all(bind=engine)
+    # 获取数据库当前版本
+    with engine.connect() as conn:
+        migration_ctx = MigrationContext.configure(conn)
+        current_revision = migration_ctx.get_current_revision()
+
+    if current_revision == head_revision:
+        print(f"[Alembic] 数据库版本已是最新: {current_revision}")
+    else:
+        print(f"[Alembic] 数据库版本: {current_revision} -> 目标版本: {head_revision}")
+        print("[Alembic] 正在执行数据库迁移 (upgrade head)...")
+        alembic_command.upgrade(alembic_cfg, "head")
+        print("[Alembic] 迁移完成!")
+
+
+try:
+    check_and_run_migrations()
+except Exception as e:
+    print(f"[Alembic] 迁移检查失败: {e}")
+    print("[Alembic] 请手动执行: alembic upgrade head")
+    sys.exit(1)
+
+# --- 初始化默认管理员 ---
+db = SessionLocal()
+try:
+    init_default_admin(db)
+finally:
+    db.close()
 
 # --- FastAPI App ---
-app = FastAPI(title="SES Sender API")
+app = FastAPI(
+    title="SES Sender API",
+    description="前后端分离的 AWS SES 邮件发送管理平台",
+    version="2.0.0",
+)
 
-# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -52,175 +84,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# AWS SES Client
-# Using IAM Role (no explicit AK/SK required)
-ses_client = boto3.client(
-    'ses',
-    region_name=os.getenv('AWS_REGION', 'us-east-1')
-)
+# --- 注册各业务域路由 ---
+app.include_router(auth_router)
+app.include_router(identity_router)
+app.include_router(template_router)
+app.include_router(audience_router)
+app.include_router(sending_router)
 
-# Dependency
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-# --- Schemas ---
-class ContactBase(BaseModel):
-    email: EmailStr
-    name: Optional[str] = None
-
-class ContactCreate(ContactBase):
-    group_id: int
-
-class GroupBase(BaseModel):
-    name: str
-    description: Optional[str] = None
-
-class GroupCreate(GroupBase):
-    pass
-
-class Group(GroupBase):
-    id: int
-    class Config:
-        from_attributes = True
-
-# --- API Endpoints ---
 
 @app.get("/")
-async def root():
+def root():
     return {"message": "SES Sender API is running"}
 
-# --- Contact Groups ---
-@app.post("/groups", response_model=Group)
-def create_group(group: GroupCreate, db: Session = Depends(get_db)):
-    db_group = ContactGroup(**group.dict())
-    db.add(db_group)
-    db.commit()
-    db.refresh(db_group)
-    return db_group
-
-@app.get("/groups", response_model=List[Group])
-def list_groups(db: Session = Depends(get_db)):
-    return db.query(ContactGroup).all()
-
-# --- Contacts ---
-@app.post("/contacts")
-def create_contact(contact: ContactCreate, db: Session = Depends(get_db)):
-    db_contact = Contact(**contact.dict())
-    db.add(db_contact)
-    db.commit()
-    db.refresh(db_contact)
-    return db_contact
-
-@app.get("/groups/{group_id}/contacts")
-def list_group_contacts(group_id: int, db: Session = Depends(get_db)):
-    return db.query(Contact).filter(Contact.group_id == group_id).all()
-
-# --- SES Identity Management ---
-class Identity(BaseModel):
-    identity: str
-    type: str
-    verification_status: str
-
-@app.get("/identities", response_model=List[Identity])
-async def list_identities():
-    try:
-        response = ses_client.list_identities()
-        identities = response.get('Identities', [])
-        if not identities: return []
-        status_response = ses_client.get_identity_verification_attributes(Identities=identities)
-        result = []
-        for identity in identities:
-            status = status_response['VerificationAttributes'].get(identity, {}).get('VerificationStatus', 'Unknown')
-            type_str = 'Domain' if '.' in identity and '@' not in identity else 'EmailAddress'
-            result.append(Identity(identity=identity, type=type_str, verification_status=status))
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/identities/verify-email")
-async def verify_email(email: str):
-    try:
-        ses_client.verify_email_identity(EmailAddress=email)
-        return {"message": f"Verification email sent to {email}"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-# --- SES Template Management ---
-class Template(BaseModel):
-    TemplateName: str
-    SubjectPart: str
-    HtmlPart: str = ""
-    TextPart: str = ""
-
-@app.get("/templates")
-async def list_templates():
-    try:
-        response = ses_client.list_templates()
-        return response.get('TemplatesMetadata', [])
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/templates")
-async def create_template(template: Template):
-    try:
-        # 强制确保所有字段都是字符串，且不为 None
-        template_name = str(template.TemplateName)
-        subject_part = str(template.SubjectPart)
-        html_part = str(template.HtmlPart or "")
-        text_part = str(template.TextPart or html_part or " ") # SES 要求至少有一个非空
-
-        template_data = {
-            'TemplateName': template_name,
-            'SubjectPart': subject_part,
-            'HtmlPart': html_part,
-            'TextPart': text_part
-        }
-
-        print(f"Sending to SES: {template_data}") # 添加日志方便调试
-
-        ses_client.create_template(Template=template_data)
-        return {"message": f"Template {template_name} created"}
-    except Exception as e:
-        print(f"SES Error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-# --- Bulk Sending ---
-class BulkSendRequest(BaseModel):
-    Source: str
-    Template: str
-    GroupId: int
-
-@app.post("/send-bulk")
-async def send_bulk_email(request: BulkSendRequest, db: Session = Depends(get_db)):
-    contacts = db.query(Contact).filter(Contact.group_id == request.GroupId).all()
-    if not contacts:
-        raise HTTPException(status_code=404, detail="No contacts found in group")
-    
-    destinations = []
-    for contact in contacts:
-        destinations.append({
-            'Destination': {'ToAddresses': [contact.email]},
-            'ReplacementTemplateData': f'{{"name": "{contact.name or "Customer"}"}}'
-        })
-    
-    try:
-        results = []
-        for i in range(0, len(destinations), 50):
-            batch = destinations[i:i+50]
-            response = ses_client.send_bulk_templated_email(
-                Source=request.Source,
-                Template=request.Template,
-                DefaultTemplateData='{"name": "Customer"}',
-                Destinations=batch
-            )
-            results.append(response)
-        return {"status": "success", "batches": len(results), "details": results}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn
