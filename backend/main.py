@@ -12,23 +12,29 @@ from sqlalchemy.orm import sessionmaker, Session, relationship
 load_dotenv()
 
 # --- Database Setup ---
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./ses_sender.db")
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+DATABASE_URL = os.getenv("DATABASE_URL", "mysql+pymysql://ses_sender:ses_sender_123@localhost:3306/ses_sender")
+
+# 根据数据库类型配置连接参数
+if DATABASE_URL.startswith("sqlite"):
+    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+else:
+    engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_recycle=3600)
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 class ContactGroup(Base):
     __tablename__ = "contact_groups"
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, unique=True, index=True)
-    description = Column(String)
+    name = Column(String(255), unique=True, index=True)
+    description = Column(String(500))
     contacts = relationship("Contact", back_populates="group")
 
 class Contact(Base):
     __tablename__ = "contacts"
     id = Column(Integer, primary_key=True, index=True)
-    email = Column(String, index=True)
-    name = Column(String)
+    email = Column(String(255), index=True)
+    name = Column(String(255))
     group_id = Column(Integer, ForeignKey("contact_groups.id"))
     group = relationship("ContactGroup", back_populates="contacts")
 
