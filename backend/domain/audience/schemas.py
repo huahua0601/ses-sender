@@ -1,9 +1,15 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List, Generic, TypeVar
+from pydantic.generics import GenericModel
 
 
 class GroupCreate(BaseModel):
     name: str
+    description: Optional[str] = None
+
+
+class GroupUpdate(BaseModel):
+    name: Optional[str] = None
     description: Optional[str] = None
 
 
@@ -12,6 +18,7 @@ class GroupOut(BaseModel):
     name: str
     description: Optional[str] = None
     user_id: int
+    contact_count: int = 0
 
     class Config:
         from_attributes = True
@@ -31,3 +38,11 @@ class ContactOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class PaginatedResponse(BaseModel):
+    items: list
+    total: int
+    page: int
+    page_size: int
+    total_pages: int

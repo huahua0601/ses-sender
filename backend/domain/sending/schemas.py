@@ -2,7 +2,7 @@ from pydantic import BaseModel
 
 
 class BulkSendRequest(BaseModel):
-    Template: str
+    TemplateId: int
     GroupId: int
 
 

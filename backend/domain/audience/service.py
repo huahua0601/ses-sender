@@ -1,22 +1,52 @@
 import io
+import math
 from typing import List
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 import openpyxl
 
 from domain.audience.models import ContactGroup, Contact
-from domain.audience.schemas import GroupCreate, ContactCreate
+from domain.audience.schemas import GroupCreate, GroupUpdate, ContactCreate, GroupOut, PaginatedResponse
 
 
 # ========== 客群操作 ==========
-def list_groups(db: Session, user_id: int) -> List[ContactGroup]:
-    return db.query(ContactGroup).filter(ContactGroup.user_id == user_id).all()
+def list_groups(db: Session, user_id: int, search: str = "", page: int = 1, page_size: int = 20) -> PaginatedResponse:
+    query = db.query(ContactGroup).filter(ContactGroup.user_id == user_id)
+    if search:
+        query = query.filter(ContactGroup.name.ilike(f"%{search}%"))
+
+    total = query.count()
+    total_pages = max(1, math.ceil(total / page_size))
+    groups = query.order_by(ContactGroup.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+
+    # 附带每个客群的联系人数量
+    items = []
+    for g in groups:
+        count = db.query(func.count(Contact.id)).filter(Contact.group_id == g.id).scalar()
+        items.append(GroupOut(
+            id=g.id, name=g.name, description=g.description,
+            user_id=g.user_id, contact_count=count
+        ))
+
+    return PaginatedResponse(items=items, total=total, page=page, page_size=page_size, total_pages=total_pages)
 
 
 def create_group(db: Session, data: GroupCreate, user_id: int) -> ContactGroup:
     group = ContactGroup(name=data.name, description=data.description, user_id=user_id)
     db.add(group)
+    db.commit()
+    db.refresh(group)
+    return group
+
+
+def update_group(db: Session, group_id: int, data: GroupUpdate, user_id: int) -> ContactGroup:
+    group = _get_user_group(db, group_id, user_id)
+    if data.name is not None:
+        group.name = data.name
+    if data.description is not None:
+        group.description = data.description
     db.commit()
     db.refresh(group)
     return group
@@ -30,9 +60,20 @@ def delete_group(db: Session, group_id: int, user_id: int) -> dict:
 
 
 # ========== 联系人操作 ==========
-def list_contacts(db: Session, group_id: int, user_id: int) -> List[Contact]:
+def list_contacts(db: Session, group_id: int, user_id: int, search: str = "", page: int = 1, page_size: int = 20) -> PaginatedResponse:
     _get_user_group(db, group_id, user_id)
-    return db.query(Contact).filter(Contact.group_id == group_id).all()
+    query = db.query(Contact).filter(Contact.group_id == group_id)
+    if search:
+        query = query.filter(
+            (Contact.name.ilike(f"%{search}%")) | (Contact.email.ilike(f"%{search}%"))
+        )
+
+    total = query.count()
+    total_pages = max(1, math.ceil(total / page_size))
+    rows = query.order_by(Contact.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    items = [{"id": c.id, "email": c.email, "name": c.name, "group_id": c.group_id} for c in rows]
+
+    return PaginatedResponse(items=items, total=total, page=page, page_size=page_size, total_pages=total_pages)
 
 
 def create_contact(db: Session, data: ContactCreate, user_id: int) -> Contact:

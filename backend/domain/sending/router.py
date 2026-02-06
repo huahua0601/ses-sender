@@ -30,7 +30,7 @@ def send_bulk_email(
         return service.send_bulk_email(
             db=db,
             source_email=current_user.email,
-            template_name=request.Template,
+            template_id=request.TemplateId,
             group_id=request.GroupId,
             user_id=current_user.id,
         )

@@ -23,6 +23,7 @@ from domain.auth.service import init_default_admin
 # 导入所有 models，确保 Alembic 能发现它们
 from domain.auth import models as _auth_models        # noqa: F401
 from domain.audience import models as _audience_models  # noqa: F401
+from domain.template import models as _template_models  # noqa: F401
 
 # 导入各域路由
 from domain.auth.router import router as auth_router

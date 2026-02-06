@@ -1,9 +1,9 @@
-from typing import List
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
 
 from core.ses import ses_client
 from domain.audience.models import ContactGroup, Contact
+from domain.template.service import get_ses_template_name
 from domain.sending.schemas import TestEmailRequest
 
 
@@ -23,13 +23,16 @@ def send_test_email(req: TestEmailRequest) -> dict:
 def send_bulk_email(
     db: Session,
     source_email: str,
-    template_name: str,
+    template_id: int,
     group_id: int,
     user_id: int,
 ) -> dict:
     """普通用户批量发送邮件"""
     if not source_email:
         raise HTTPException(status_code=400, detail="您尚未配置发送邮箱，请联系管理员")
+
+    # 获取 SES 模版名称（按用户隔离）
+    ses_template_name = get_ses_template_name(db, template_id, user_id)
 
     # 校验客群归属
     group = db.query(ContactGroup).filter(
@@ -57,7 +60,7 @@ def send_bulk_email(
         batch = destinations[i : i + 50]
         response = ses_client.send_bulk_templated_email(
             Source=source_email,
-            Template=template_name,
+            Template=ses_template_name,
             DefaultTemplateData='{"name": "Customer"}',
             Destinations=batch,
         )
