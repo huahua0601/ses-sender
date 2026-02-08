@@ -1,22 +1,34 @@
+import uuid
+import math
+from typing import List
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
 
 from core.ses import ses_client
+from core.config import SES_CONFIGURATION_SET
 from domain.audience.models import ContactGroup, Contact
+from domain.template.models import EmailTemplate
 from domain.template.service import get_ses_template_name
-from domain.sending.schemas import TestEmailRequest
+from domain.sending.models import SendingJob
+from domain.sending.schemas import TestEmailRequest, SendingJobOut
 
 
 def send_test_email(req: TestEmailRequest) -> dict:
     """管理员发送测试邮件"""
-    response = ses_client.send_email(
-        Source=req.source,
-        Destination={"ToAddresses": [req.to]},
-        Message={
+    params = {
+        "Source": req.source,
+        "Destination": {"ToAddresses": [req.to]},
+        "Message": {
             "Subject": {"Data": req.subject, "Charset": "UTF-8"},
             "Body": {"Html": {"Data": req.html_body, "Charset": "UTF-8"}},
         },
-    )
+    }
+    # 如果配置了 Configuration Set，附加到测试邮件
+    # if SES_CONFIGURATION_SET:
+    #     params["ConfigurationSetName"] = SES_CONFIGURATION_SET
+    #     params["Tags"] = [{"Name": "batch_id", "Value": "test"}]
+
+    response = ses_client.send_email(**params)
     return {"message": "测试邮件发送成功", "message_id": response.get("MessageId")}
 
 
@@ -27,12 +39,15 @@ def send_bulk_email(
     group_id: int,
     user_id: int,
 ) -> dict:
-    """普通用户批量发送邮件"""
+    """普通用户批量发送邮件（附加 VDM 追踪标签）"""
     if not source_email:
         raise HTTPException(status_code=400, detail="您尚未配置发送邮箱，请联系管理员")
 
-    # 获取 SES 模版名称（按用户隔离）
+    # 获取 SES 模版名称
     ses_template_name = get_ses_template_name(db, template_id, user_id)
+
+    # 获取模版信息（用于记录）
+    tpl = db.query(EmailTemplate).filter(EmailTemplate.id == template_id, EmailTemplate.user_id == user_id).first()
 
     # 校验客群归属
     group = db.query(ContactGroup).filter(
@@ -45,6 +60,9 @@ def send_bulk_email(
     if not contacts:
         raise HTTPException(status_code=404, detail="客群中没有联系人")
 
+    # 生成唯一批次 ID
+    batch_id = f"batch-{uuid.uuid4().hex[:12]}"
+
     # 构建发送列表
     destinations = [
         {
@@ -54,21 +72,125 @@ def send_bulk_email(
         for c in contacts
     ]
 
+    # 构建发送参数
+    send_params = {
+        "Source": source_email,
+        "Template": ses_template_name,
+        "DefaultTemplateData": '{"name": "Customer"}',
+    }
+
+    # 附加 Configuration Set 和 Tags（用于 VDM 追踪）
+    # 注意：SES Tag 值只允许 ASCII 字符，中文需过滤
+    def _ascii_tag(val: str) -> str:
+        return "".join(c if ord(c) < 128 and c not in ' "\'\\' else "_" for c in val)[:256] or "unknown"
+
+    if SES_CONFIGURATION_SET:
+        send_params["ConfigurationSetName"] = SES_CONFIGURATION_SET
+        send_params["DefaultTags"] = [
+            {"Name": "batch_id", "Value": batch_id},
+            {"Name": "user_id", "Value": str(user_id)},
+            {"Name": "group_name", "Value": _ascii_tag(group.name)},
+            {"Name": "template_name", "Value": _ascii_tag(tpl.name if tpl else "unknown")},
+        ]
+
     # 分批发送（SES 限制每批 50 封）
     results = []
-    for i in range(0, len(destinations), 50):
-        batch = destinations[i : i + 50]
-        response = ses_client.send_bulk_templated_email(
-            Source=source_email,
-            Template=ses_template_name,
-            DefaultTemplateData='{"name": "Customer"}',
-            Destinations=batch,
-        )
-        results.append(response)
+    error_msg = None
+    status = "success"
+    try:
+        for i in range(0, len(destinations), 50):
+            batch = destinations[i: i + 50]
+            response = ses_client.send_bulk_templated_email(
+                Destinations=batch,
+                **send_params,
+            )
+            results.append(response)
+    except Exception as e:
+        error_msg = str(e)
+        status = "failed" if not results else "partial"
+
+    # 记录发送历史
+    job = SendingJob(
+        user_id=user_id,
+        batch_id=batch_id,
+        template_name=tpl.name if tpl else "unknown",
+        group_name=group.name,
+        source_email=source_email,
+        total_contacts=len(contacts),
+        total_batches=len(results),
+        status=status,
+        error_message=error_msg,
+        configuration_set=SES_CONFIGURATION_SET or None,
+    )
+    db.add(job)
+    db.commit()
+
+    if status == "failed":
+        raise HTTPException(status_code=500, detail=error_msg)
 
     return {
-        "status": "success",
+        "status": status,
+        "batch_id": batch_id,
         "source": source_email,
         "batches": len(results),
         "total_contacts": len(contacts),
+        "configuration_set": SES_CONFIGURATION_SET or "未配置",
     }
+
+
+def get_batch_metrics(batch_id: str) -> dict:
+    """从 CloudWatch 获取指定批次的送达指标"""
+    import boto3
+    from datetime import datetime, timedelta
+    cw = boto3.client("cloudwatch", region_name="us-east-1")
+
+    now = datetime.utcnow()
+    start = now - timedelta(days=14)  # 查最近14天
+
+    metrics_to_fetch = ["Send", "Delivery", "Bounce", "Complaint", "Open", "Click", "Reject"]
+    result = {}
+
+    for metric_name in metrics_to_fetch:
+        try:
+            resp = cw.get_metric_statistics(
+                Namespace="AWS/SES",
+                MetricName=metric_name,
+                Dimensions=[{"Name": "batch_id", "Value": batch_id}],
+                StartTime=start,
+                EndTime=now,
+                Period=86400 * 14,  # 整个时间段汇总
+                Statistics=["Sum"],
+            )
+            datapoints = resp.get("Datapoints", [])
+            total = sum(dp.get("Sum", 0) for dp in datapoints)
+            result[metric_name.lower()] = int(total)
+        except Exception:
+            result[metric_name.lower()] = 0
+
+    # 计算比率
+    send = result.get("send", 0)
+    delivery = result.get("delivery", 0)
+    opens = result.get("open", 0)
+    result["delivery_rate"] = round(delivery / send * 100, 1) if send > 0 else 0
+    result["open_rate"] = round(opens / delivery * 100, 1) if delivery > 0 else 0
+    result["bounce_rate"] = round(result.get("bounce", 0) / send * 100, 1) if send > 0 else 0
+
+    return result
+
+
+def list_sending_jobs(db: Session, user_id: int, page: int = 1, page_size: int = 15) -> dict:
+    """查询用户的发送历史"""
+    query = db.query(SendingJob).filter(SendingJob.user_id == user_id)
+    total = query.count()
+    total_pages = max(1, math.ceil(total / page_size))
+    rows = query.order_by(SendingJob.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+
+    items = [SendingJobOut(
+        id=r.id, batch_id=r.batch_id, template_name=r.template_name,
+        group_name=r.group_name, source_email=r.source_email,
+        total_contacts=r.total_contacts, total_batches=r.total_batches,
+        status=r.status, error_message=r.error_message,
+        configuration_set=r.configuration_set, created_at=r.created_at,
+    ) for r in rows]
+
+    return {"items": items, "total": total, "page": page, "page_size": page_size, "total_pages": total_pages}

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from core.database import get_db
@@ -38,3 +38,29 @@ def send_bulk_email(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ========== 发送历史 ==========
+@router.get("/sending-jobs/{batch_id}/metrics")
+def get_batch_metrics(
+    batch_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """获取指定批次的 CloudWatch 指标"""
+    # 验证该批次属于当前用户
+    from domain.sending.models import SendingJob
+    job = db.query(SendingJob).filter(SendingJob.batch_id == batch_id, SendingJob.user_id == current_user.id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="批次不存在")
+    return service.get_batch_metrics(batch_id)
+
+
+@router.get("/sending-jobs")
+def list_sending_jobs(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(15, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return service.list_sending_jobs(db, current_user.id, page, page_size)

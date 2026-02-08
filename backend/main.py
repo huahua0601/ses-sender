@@ -24,6 +24,7 @@ from domain.auth.service import init_default_admin
 from domain.auth import models as _auth_models        # noqa: F401
 from domain.audience import models as _audience_models  # noqa: F401
 from domain.template import models as _template_models  # noqa: F401
+from domain.sending import models as _sending_models    # noqa: F401
 
 # 导入各域路由
 from domain.auth.router import router as auth_router

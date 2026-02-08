@@ -13,3 +13,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "mysql+pymysql://ses_sender:ses_sender_
 
 # AWS
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
+
+# SES Configuration Set (用于 VDM 追踪送达率/打开率)
+# 需要在 AWS SES 控制台创建 Configuration Set 并启用 VDM
+SES_CONFIGURATION_SET = os.getenv("SES_CONFIGURATION_SET", "")

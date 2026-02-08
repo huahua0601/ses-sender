@@ -214,10 +214,10 @@ function AdminApp() {
 function UserApp() {
   const [tab,setTab]=useState("groups");
   return <div className="min-h-screen flex">
-    <Sidebar menus={[{id:"groups",icon:"📁",label:"客群管理"},{id:"templates",icon:"📋",label:"邮件模版"},{id:"send",icon:"🚀",label:"批量发送"}]} active={tab} setActive={setTab}/>
+    <Sidebar menus={[{id:"groups",icon:"📁",label:"客群管理"},{id:"templates",icon:"📋",label:"邮件模版"},{id:"send",icon:"🚀",label:"批量发送"},{id:"history",icon:"📊",label:"发送历史"}]} active={tab} setActive={setTab}/>
     <div className="flex-1 flex flex-col min-w-0">
-      <header className="h-16 flex items-center px-6 bg-white border-b border-gray-100 shadow-sm flex-shrink-0"><h2 className="text-lg font-semibold text-gray-800">{{groups:"客群管理",templates:"邮件模版",send:"批量发送"}[tab]}</h2></header>
-      <main className="flex-1 p-6 overflow-auto">{tab==="groups"&&<UserGroups/>}{tab==="templates"&&<UserTemplates/>}{tab==="send"&&<UserSend/>}</main>
+      <header className="h-16 flex items-center px-6 bg-white border-b border-gray-100 shadow-sm flex-shrink-0"><h2 className="text-lg font-semibold text-gray-800">{{groups:"客群管理",templates:"邮件模版",send:"批量发送",history:"发送历史"}[tab]}</h2></header>
+      <main className="flex-1 p-6 overflow-auto">{tab==="groups"&&<UserGroups/>}{tab==="templates"&&<UserTemplates/>}{tab==="send"&&<UserSend/>}{tab==="history"&&<SendingHistory/>}</main>
     </div>
   </div>;
 }
@@ -528,7 +528,7 @@ function UserSend() {
   const {token,user}=useAuth(); const {toast}=useToast();
   const [ts,setTs]=useState([]); const [gs,setGs]=useState([]); const [f,setF]=useState({templateId:"",groupId:""}); const [ld,setLd]=useState(false);
   useEffect(()=>{Promise.all([fetch(`${API}/user/templates`,{headers:authH(token)}).then(r=>r.json()),fetch(`${API}/groups`,{headers:authH(token)}).then(r=>r.json())]).then(([t,g])=>{setTs(Array.isArray(t)?t:[]);setGs(Array.isArray(g?.items)?g.items:Array.isArray(g)?g:[]);});},[]);
-  const send=async()=>{if(!f.templateId||!f.groupId)return toast("warning","请选择模版和客群");if(!user.email)return toast("warning","发送邮箱未配置","请联系管理员");setLd(true);try{const r=await fetch(`${API}/send-bulk`,{method:"POST",headers:authH(token),body:JSON.stringify({TemplateId:parseInt(f.templateId),GroupId:parseInt(f.groupId)})});const d=await r.json();if(r.ok)toast("success","发送成功",`邮箱: ${d.source}\n批次: ${d.batches}\n人数: ${d.total_contacts}`);else toast("error","失败",d.detail);}catch{toast("error","网络错误");}finally{setLd(false);}};
+  const send=async()=>{if(!f.templateId||!f.groupId)return toast("warning","请选择模版和客群");if(!user.email)return toast("warning","发送邮箱未配置","请联系管理员");setLd(true);try{const r=await fetch(`${API}/send-bulk`,{method:"POST",headers:authH(token),body:JSON.stringify({TemplateId:parseInt(f.templateId),GroupId:parseInt(f.groupId)})});const d=await r.json();if(r.ok)toast("success","发送成功",`批次: ${d.batch_id}\n邮箱: ${d.source}\n人数: ${d.total_contacts}`);else toast("error","失败",d.detail);}catch{toast("error","网络错误");}finally{setLd(false);}};
 
   return <div style={{maxWidth:640}}><Card title="批量发送邮件">
     <div className="space-y-4">
@@ -538,4 +538,94 @@ function UserSend() {
       <Btn onClick={send} disabled={ld||!user.email} className="w-full" size="lg">{ld?"发送中...":"开始批量发送"}</Btn>
     </div>
   </Card></div>;
+}
+
+// ===== Sending History =====
+function SendingHistory() {
+  const {token}=useAuth();
+  const [jobs,setJobs]=useState([]); const [page,setPage]=useState(1); const [total,setTotal]=useState(0); const [totalPages,setTotalPages]=useState(1);
+  const [showMetrics,setShowMetrics]=useState(false);
+  const [metricsJob,setMetricsJob]=useState(null);
+  const [metrics,setMetrics]=useState(null);
+  const [metricsLoading,setMetricsLoading]=useState(false);
+
+  const load=async(p=page)=>{
+    try{const d=await(await fetch(`${API}/sending-jobs?page=${p}&page_size=10`,{headers:authH(token)})).json();setJobs(d.items||[]);setTotal(d.total||0);setTotalPages(d.total_pages||1);setPage(d.page||1);}catch{setJobs([]);}
+  };
+  useEffect(()=>{load(1);},[]);
+
+  const openMetrics=async(job)=>{
+    setMetricsJob(job);setMetrics(null);setShowMetrics(true);setMetricsLoading(true);
+    try{
+      const d=await(await fetch(`${API}/sending-jobs/${job.batch_id}/metrics`,{headers:authH(token)})).json();
+      setMetrics(d);
+    }catch{setMetrics(null);}
+    finally{setMetricsLoading(false);}
+  };
+
+  const statusBadge=(s)=>{
+    if(s==="success") return <Badge color="green">发送成功</Badge>;
+    if(s==="partial") return <Badge color="orange">部分成功</Badge>;
+    return <Badge color="red">发送失败</Badge>;
+  };
+
+  const metricCard=(label,value,rate,color)=>(
+    <div className="bg-white border border-gray-100 rounded-xl p-4 text-center">
+      <p className="text-xs text-gray-400 mb-1">{label}</p>
+      <p className="text-2xl font-bold" style={{color}}>{value}</p>
+      {rate!==undefined&&<p className="text-xs mt-1" style={{color}}>{rate}%</p>}
+    </div>
+  );
+
+  return <>
+    <Modal open={showMetrics} onClose={()=>setShowMetrics(false)} title={`批次指标 - ${metricsJob?.batch_id||""}`} width={640}>
+      {metricsLoading?<div className="text-center py-12 text-gray-400">加载中...</div>:
+      metrics?<div className="space-y-5">
+        {/* 基本信息 */}
+        <div className="grid grid-cols-2 gap-3 text-sm">
+          <div><span className="text-gray-400">模版：</span><span className="text-gray-800">{metricsJob?.template_name}</span></div>
+          <div><span className="text-gray-400">客群：</span><span className="text-gray-800">{metricsJob?.group_name}</span></div>
+          <div><span className="text-gray-400">发送邮箱：</span><span className="text-gray-800">{metricsJob?.source_email}</span></div>
+          <div><span className="text-gray-400">发送时间：</span><span className="text-gray-800">{metricsJob?.created_at?new Date(metricsJob.created_at).toLocaleString():"-"}</span></div>
+        </div>
+        {/* 指标卡片 */}
+        <div className="grid grid-cols-3 gap-3">
+          {metricCard("发送数",metrics.send,undefined,"#3C50E0")}
+          {metricCard("送达数",metrics.delivery,metrics.delivery_rate,"#10B981")}
+          {metricCard("打开数",metrics.open,metrics.open_rate,"#8B5CF6")}
+        </div>
+        <div className="grid grid-cols-4 gap-3">
+          {metricCard("退信数",metrics.bounce,metrics.bounce_rate,"#EF4444")}
+          {metricCard("投诉数",metrics.complaint,undefined,"#F59E0B")}
+          {metricCard("点击数",metrics.click,undefined,"#3B82F6")}
+          {metricCard("拒绝数",metrics.reject,undefined,"#6B7280")}
+        </div>
+        {/* 比率条 */}
+        <div className="space-y-2">
+          <div><div className="flex justify-between text-xs mb-1"><span className="text-gray-500">送达率</span><span className="font-medium" style={{color:"#10B981"}}>{metrics.delivery_rate}%</span></div><div className="h-2 bg-gray-100 rounded-full overflow-hidden"><div className="h-full rounded-full" style={{width:`${metrics.delivery_rate}%`,background:"#10B981"}}/></div></div>
+          <div><div className="flex justify-between text-xs mb-1"><span className="text-gray-500">打开率</span><span className="font-medium" style={{color:"#8B5CF6"}}>{metrics.open_rate}%</span></div><div className="h-2 bg-gray-100 rounded-full overflow-hidden"><div className="h-full rounded-full" style={{width:`${metrics.open_rate}%`,background:"#8B5CF6"}}/></div></div>
+          <div><div className="flex justify-between text-xs mb-1"><span className="text-gray-500">退信率</span><span className="font-medium" style={{color:"#EF4444"}}>{metrics.bounce_rate}%</span></div><div className="h-2 bg-gray-100 rounded-full overflow-hidden"><div className="h-full rounded-full" style={{width:`${metrics.bounce_rate}%`,background:"#EF4444"}}/></div></div>
+        </div>
+        <p className="text-xs text-gray-400">数据来源：AWS CloudWatch（指标可能有 5-15 分钟延迟）</p>
+      </div>:<div className="text-center py-12 text-gray-400">暂无指标数据（需配置 Configuration Set 和 Event Destination）</div>}
+    </Modal>
+
+    <Card title="发送历史" extra={<Btn variant="outline" size="sm" onClick={()=>load(1)}>刷新</Btn>}>
+      <div className="overflow-x-auto"><table className="w-full">
+        <thead><tr className="border-b border-gray-100">{["批次ID","模版","客群","发送邮箱","联系人数","状态","发送时间","指标"].map(h=><th key={h} className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider py-3 px-3 whitespace-nowrap">{h}</th>)}</tr></thead>
+        <tbody>{jobs.map(j=><tr key={j.id} className="border-b border-gray-50 hover:bg-gray-50/50 transition">
+          <td className="py-3 px-3 text-xs text-gray-500 font-mono">{j.batch_id}</td>
+          <td className="py-3 px-3 text-sm text-gray-800">{j.template_name}</td>
+          <td className="py-3 px-3 text-sm text-gray-800">{j.group_name}</td>
+          <td className="py-3 px-3 text-sm text-gray-500">{j.source_email}</td>
+          <td className="py-3 px-3 text-sm text-gray-600 text-center">{j.total_contacts}</td>
+          <td className="py-3 px-3">{statusBadge(j.status)}</td>
+          <td className="py-3 px-3 text-xs text-gray-400 whitespace-nowrap">{j.created_at?new Date(j.created_at).toLocaleString():"-"}</td>
+          <td className="py-3 px-3">{j.configuration_set?<Btn variant="primary" size="sm" onClick={()=>openMetrics(j)}>查看指标</Btn>:<span className="text-xs text-gray-400">-</span>}</td>
+        </tr>)}</tbody>
+      </table></div>
+      {jobs.length===0&&<p className="text-center py-8 text-sm text-gray-400">暂无发送记录</p>}
+      <Pager page={page} totalPages={totalPages} total={total} onPageChange={p=>load(p)}/>
+    </Card>
+  </>;
 }
