@@ -19,6 +19,22 @@ def send_test_email(req: TestEmailRequest, admin: User = Depends(require_admin))
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ========== 管理员：发送统计 ==========
+@router.get("/admin/sending-stats")
+def admin_sending_stats(admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    return service.get_admin_stats(db)
+
+
+@router.get("/admin/sending-jobs")
+def admin_all_jobs(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(15, ge=1, le=100),
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    return service.get_admin_all_jobs(db, page, page_size)
+
+
 # ========== 普通用户：批量发送 ==========
 @router.post("/send-bulk")
 def send_bulk_email(

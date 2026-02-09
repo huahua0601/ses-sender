@@ -194,3 +194,94 @@ def list_sending_jobs(db: Session, user_id: int, page: int = 1, page_size: int =
     ) for r in rows]
 
     return {"items": items, "total": total, "page": page, "page_size": page_size, "total_pages": total_pages}
+
+
+def get_admin_stats(db: Session) -> dict:
+    """管理员：获取所有用户的发送统计"""
+    from domain.auth.models import User as UserModel
+    from sqlalchemy import func, case
+
+    # 按用户汇总
+    user_stats = db.query(
+        SendingJob.user_id,
+        func.count(SendingJob.id).label("total_jobs"),
+        func.sum(SendingJob.total_contacts).label("total_contacts"),
+        func.sum(case((SendingJob.status == "success", 1), else_=0)).label("success_count"),
+        func.sum(case((SendingJob.status == "failed", 1), else_=0)).label("failed_count"),
+        func.min(SendingJob.created_at).label("first_send"),
+        func.max(SendingJob.created_at).label("last_send"),
+    ).group_by(SendingJob.user_id).all()
+
+    # 查用户信息
+    user_map = {}
+    user_ids = [s.user_id for s in user_stats]
+    if user_ids:
+        users = db.query(UserModel).filter(UserModel.id.in_(user_ids)).all()
+        user_map = {u.id: u for u in users}
+
+    items = []
+    for s in user_stats:
+        u = user_map.get(s.user_id)
+        items.append({
+            "user_id": s.user_id,
+            "username": u.username if u else "unknown",
+            "display_name": u.display_name if u else "unknown",
+            "email": u.email if u else "",
+            "total_jobs": s.total_jobs,
+            "total_contacts": s.total_contacts or 0,
+            "success_count": s.success_count or 0,
+            "failed_count": s.failed_count or 0,
+            "first_send": s.first_send.isoformat() if s.first_send else None,
+            "last_send": s.last_send.isoformat() if s.last_send else None,
+        })
+
+    # 全局汇总
+    total_jobs = sum(i["total_jobs"] for i in items)
+    total_contacts = sum(i["total_contacts"] for i in items)
+    total_success = sum(i["success_count"] for i in items)
+
+    return {
+        "summary": {
+            "total_users": len(items),
+            "total_jobs": total_jobs,
+            "total_contacts": total_contacts,
+            "success_rate": round(total_success / total_jobs * 100, 1) if total_jobs > 0 else 0,
+        },
+        "users": sorted(items, key=lambda x: x["total_contacts"], reverse=True),
+    }
+
+
+def get_admin_all_jobs(db: Session, page: int = 1, page_size: int = 15) -> dict:
+    """管理员：查看所有用户的发送历史"""
+    from domain.auth.models import User as UserModel
+
+    query = db.query(SendingJob)
+    total = query.count()
+    total_pages = max(1, math.ceil(total / page_size))
+    rows = query.order_by(SendingJob.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+
+    # 查用户信息
+    user_ids = list(set(r.user_id for r in rows))
+    user_map = {}
+    if user_ids:
+        users = db.query(UserModel).filter(UserModel.id.in_(user_ids)).all()
+        user_map = {u.id: u for u in users}
+
+    items = []
+    for r in rows:
+        u = user_map.get(r.user_id)
+        items.append({
+            "id": r.id,
+            "batch_id": r.batch_id,
+            "username": u.username if u else "unknown",
+            "display_name": u.display_name if u else "unknown",
+            "template_name": r.template_name,
+            "group_name": r.group_name,
+            "source_email": r.source_email,
+            "total_contacts": r.total_contacts,
+            "status": r.status,
+            "configuration_set": r.configuration_set,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        })
+
+    return {"items": items, "total": total, "page": page, "page_size": page_size, "total_pages": total_pages}

@@ -9,6 +9,14 @@ from domain.identity import service
 router = APIRouter(prefix="/admin/identities", tags=["发送实体管理"])
 
 
+@router.get("/reputation")
+def get_reputation(admin: User = Depends(require_admin)):
+    try:
+        return service.get_account_reputation()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("", response_model=List[IdentityOut])
 def list_identities(admin: User = Depends(require_admin)):
     try:

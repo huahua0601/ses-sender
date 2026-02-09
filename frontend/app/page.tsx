@@ -201,12 +201,12 @@ function Modal({open,onClose,title,width=480,children}:{open:boolean;onClose:()=
 
 // ===== Admin App =====
 function AdminApp() {
-  const [tab,setTab]=useState("users");
+  const [tab,setTab]=useState("stats");
   return <div className="min-h-screen flex">
-    <Sidebar menus={[{id:"users",icon:"👤",label:"用户管理"},{id:"identities",icon:"🔐",label:"发送实体"},{id:"templates",icon:"📋",label:"邮件模版"},{id:"test",icon:"📧",label:"测试邮件"}]} active={tab} setActive={setTab}/>
+    <Sidebar menus={[{id:"stats",icon:"📊",label:"发送统计"},{id:"users",icon:"👤",label:"用户管理"},{id:"identities",icon:"🔐",label:"发送实体"},{id:"templates",icon:"📋",label:"邮件模版"},{id:"test",icon:"📧",label:"测试邮件"}]} active={tab} setActive={setTab}/>
     <div className="flex-1 flex flex-col min-w-0">
-      <header className="h-16 flex items-center px-6 bg-white border-b border-gray-100 shadow-sm flex-shrink-0"><h2 className="text-lg font-semibold text-gray-800">{{users:"用户管理",identities:"发送实体",templates:"邮件模版",test:"测试邮件"}[tab]}</h2></header>
-      <main className="flex-1 p-6 overflow-auto">{tab==="users"&&<AdminUsers/>}{tab==="identities"&&<AdminIdentities/>}{tab==="templates"&&<AdminTemplates/>}{tab==="test"&&<AdminTestEmail/>}</main>
+      <header className="h-16 flex items-center px-6 bg-white border-b border-gray-100 shadow-sm flex-shrink-0"><h2 className="text-lg font-semibold text-gray-800">{{stats:"发送统计",users:"用户管理",identities:"发送实体",templates:"邮件模版",test:"测试邮件"}[tab]}</h2></header>
+      <main className="flex-1 p-6 overflow-auto">{tab==="stats"&&<AdminStats/>}{tab==="users"&&<AdminUsers/>}{tab==="identities"&&<AdminIdentities/>}{tab==="templates"&&<AdminTemplates/>}{tab==="test"&&<AdminTestEmail/>}</main>
     </div>
   </div>;
 }
@@ -219,6 +219,73 @@ function UserApp() {
       <header className="h-16 flex items-center px-6 bg-white border-b border-gray-100 shadow-sm flex-shrink-0"><h2 className="text-lg font-semibold text-gray-800">{{groups:"客群管理",templates:"邮件模版",send:"批量发送",history:"发送历史"}[tab]}</h2></header>
       <main className="flex-1 p-6 overflow-auto">{tab==="groups"&&<UserGroups/>}{tab==="templates"&&<UserTemplates/>}{tab==="send"&&<UserSend/>}{tab==="history"&&<SendingHistory/>}</main>
     </div>
+  </div>;
+}
+
+// ===== Admin: Stats =====
+function AdminStats() {
+  const {token}=useAuth();
+  const [stats,setStats]=useState(null);
+  const [jobs,setJobs]=useState([]); const [page,setPage]=useState(1); const [total,setTotal]=useState(0); const [totalPages,setTotalPages]=useState(1);
+
+  const loadStats=async()=>{try{setStats(await(await fetch(`${API}/admin/sending-stats`,{headers:authH(token)})).json());}catch{}};
+  const loadJobs=async(p=1)=>{try{const d=await(await fetch(`${API}/admin/sending-jobs?page=${p}&page_size=10`,{headers:authH(token)})).json();setJobs(d.items||[]);setTotal(d.total||0);setTotalPages(d.total_pages||1);setPage(d.page||1);}catch{setJobs([]);}};
+  useEffect(()=>{loadStats();loadJobs(1);},[]);
+
+  const statCard=(label,value,sub,color)=>(
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+      <p className="text-sm text-gray-400">{label}</p>
+      <p className="text-3xl font-bold mt-1" style={{color}}>{value}</p>
+      {sub&&<p className="text-xs text-gray-400 mt-1">{sub}</p>}
+    </div>
+  );
+
+  return <div className="space-y-6">
+    {/* 全局概览卡片 */}
+    {stats?.summary&&<div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      {statCard("发送用户数",stats.summary.total_users,"位用户使用了邮件发送","#3C50E0")}
+      {statCard("总发送批次",stats.summary.total_jobs,"批次邮件发送任务","#8B5CF6")}
+      {statCard("总发送人数",stats.summary.total_contacts,"封邮件已发送","#10B981")}
+      {statCard("发送成功率",stats.summary.success_rate+"%","批次级别成功率","#F59E0B")}
+    </div>}
+
+    {/* 按用户统计 */}
+    <Card title="用户发送统计" extra={<Btn variant="outline" size="sm" onClick={()=>{loadStats();loadJobs(1);}}>刷新</Btn>}>
+      <div className="overflow-x-auto"><table className="w-full">
+        <thead><tr className="border-b border-gray-100">{["用户名","显示名称","发送邮箱","发送批次","发送人数","成功","失败","首次发送","最近发送"].map(h=><th key={h} className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider py-3 px-3 whitespace-nowrap">{h}</th>)}</tr></thead>
+        <tbody>{(stats?.users||[]).map(u=><tr key={u.user_id} className="border-b border-gray-50 hover:bg-gray-50/50 transition">
+          <td className="py-3 px-3 text-sm font-medium text-gray-800">{u.username}</td>
+          <td className="py-3 px-3 text-sm text-gray-600">{u.display_name}</td>
+          <td className="py-3 px-3 text-sm text-gray-500">{u.email||"-"}</td>
+          <td className="py-3 px-3 text-sm text-gray-800 text-center font-medium">{u.total_jobs}</td>
+          <td className="py-3 px-3 text-sm text-center font-medium" style={{color:"#3C50E0"}}>{u.total_contacts}</td>
+          <td className="py-3 px-3 text-center"><Badge color="green">{u.success_count}</Badge></td>
+          <td className="py-3 px-3 text-center">{u.failed_count>0?<Badge color="red">{u.failed_count}</Badge>:<span className="text-gray-300">0</span>}</td>
+          <td className="py-3 px-3 text-xs text-gray-400 whitespace-nowrap">{u.first_send?new Date(u.first_send).toLocaleString():"-"}</td>
+          <td className="py-3 px-3 text-xs text-gray-400 whitespace-nowrap">{u.last_send?new Date(u.last_send).toLocaleString():"-"}</td>
+        </tr>)}</tbody>
+      </table></div>
+      {(!stats?.users||stats.users.length===0)&&<p className="text-center py-8 text-sm text-gray-400">暂无发送数据</p>}
+    </Card>
+
+    {/* 全部发送记录 */}
+    <Card title="全部发送记录">
+      <div className="overflow-x-auto"><table className="w-full">
+        <thead><tr className="border-b border-gray-100">{["批次ID","用户","模版","客群","发送邮箱","人数","状态","发送时间"].map(h=><th key={h} className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider py-3 px-3 whitespace-nowrap">{h}</th>)}</tr></thead>
+        <tbody>{jobs.map(j=><tr key={j.id} className="border-b border-gray-50 hover:bg-gray-50/50 transition">
+          <td className="py-3 px-3 text-xs text-gray-500 font-mono">{j.batch_id}</td>
+          <td className="py-3 px-3 text-sm text-gray-800">{j.display_name||j.username}</td>
+          <td className="py-3 px-3 text-sm text-gray-600">{j.template_name}</td>
+          <td className="py-3 px-3 text-sm text-gray-600">{j.group_name}</td>
+          <td className="py-3 px-3 text-sm text-gray-500">{j.source_email}</td>
+          <td className="py-3 px-3 text-sm text-gray-800 text-center">{j.total_contacts}</td>
+          <td className="py-3 px-3">{j.status==="success"?<Badge color="green">成功</Badge>:j.status==="partial"?<Badge color="orange">部分</Badge>:<Badge color="red">失败</Badge>}</td>
+          <td className="py-3 px-3 text-xs text-gray-400 whitespace-nowrap">{j.created_at?new Date(j.created_at).toLocaleString():"-"}</td>
+        </tr>)}</tbody>
+      </table></div>
+      {jobs.length===0&&<p className="text-center py-8 text-sm text-gray-400">暂无发送记录</p>}
+      <Pager page={page} totalPages={totalPages} total={total} onPageChange={p=>loadJobs(p)}/>
+    </Card>
   </div>;
 }
 
@@ -297,24 +364,50 @@ function AdminUsers() {
 function AdminIdentities() {
   const {token}=useAuth(); const {toast}=useToast();
   const [list,setList]=useState([]); const [ne,setNe]=useState(""); const [nd,setNd]=useState("");
-  const load=async()=>{const d=await(await fetch(`${API}/admin/identities`,{headers:authH(token)})).json();setList(Array.isArray(d)?d:[]);}; useEffect(()=>{load();},[]);
+  const [rep,setRep]=useState(null);
+
+  const load=async()=>{const d=await(await fetch(`${API}/admin/identities`,{headers:authH(token)})).json();setList(Array.isArray(d)?d:[]);};
+  const loadRep=async()=>{try{setRep(await(await fetch(`${API}/admin/identities/reputation`,{headers:authH(token)})).json());}catch{}};
+  useEffect(()=>{load();loadRep();},[]);
+
   const ve=async()=>{if(!ne)return;const r=await fetch(`${API}/admin/identities/verify-email?email=${ne}`,{method:"POST",headers:authH(token)});if(r.ok){toast("success","验证邮件已发送",ne);setNe("");load();}else{const e=await r.json();toast("error","失败",e.detail);}};
   const vd=async()=>{if(!nd)return;const r=await fetch(`${API}/admin/identities/verify-domain?domain=${nd}`,{method:"POST",headers:authH(token)});const d=await r.json();if(r.ok){toast("info","请添加 TXT 记录",`_amazonses.${nd} -> ${d.token}`);setNd("");load();}else toast("error","失败",d.detail);};
 
-  return <Card title="发送实体管理">
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-      <div className="flex gap-2"><Input placeholder="邮箱地址" value={ne} onChange={e=>setNe(e.target.value)}/><Btn onClick={ve} className="flex-shrink-0">验证邮箱</Btn></div>
-      <div className="flex gap-2"><Input placeholder="域名 (example.com)" value={nd} onChange={e=>setNd(e.target.value)}/><Btn variant="success" onClick={vd} className="flex-shrink-0">验证域名</Btn></div>
+  const repCard=(label,value,sub,color)=>(
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 text-center">
+      <p className="text-xs text-gray-400">{label}</p>
+      <p className="text-2xl font-bold mt-1" style={{color}}>{value}</p>
+      {sub&&<p className="text-xs text-gray-400 mt-0.5">{sub}</p>}
     </div>
-    <div className="overflow-x-auto"><table className="w-full">
-      <thead><tr className="border-b border-gray-100">{["实体名称","类型","验证状态"].map(h=><th key={h} className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider py-3 px-4">{h}</th>)}</tr></thead>
-      <tbody>{list.map(i=><tr key={i.identity} className="border-b border-gray-50 hover:bg-gray-50/50 transition">
-        <td className="py-3 px-4 text-sm font-medium text-gray-800">{i.identity}</td>
-        <td className="py-3 px-4 text-sm text-gray-500">{i.type==="EmailAddress"?"邮箱":"域名"}</td>
-        <td className="py-3 px-4"><Badge color={i.verification_status==="Success"?"green":"orange"}>{i.verification_status==="Success"?"已验证":"验证中"}</Badge></td>
-      </tr>)}</tbody>
-    </table></div>
-  </Card>;
+  );
+
+  return <div className="space-y-6">
+    {/* 账户信誉概览 */}
+    {rep&&<div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      {repCard("账户状态", rep.enforcement_status, rep.production_access?"生产模式":"沙箱模式", rep.enforcement_status==="HEALTHY"?"#10B981":"#EF4444")}
+      {repCard("24h 已发送", `${rep.sent_last_24h} / ${rep.max_24h_send}`, `发送速率 ${rep.max_send_rate}/秒`, "#3C50E0")}
+      {repCard("退信率", rep.bounce_rate+"%", "近 7 天平均（<5% 为健康）", rep.bounce_rate<5?"#10B981":"#EF4444")}
+      {repCard("投诉率", rep.complaint_rate+"%", "近 7 天平均（<0.1% 为健康）", rep.complaint_rate<0.1?"#10B981":"#EF4444")}
+    </div>}
+
+    {/* 发送实体管理 */}
+    <Card title="发送实体管理" extra={<Btn variant="outline" size="sm" onClick={()=>{load();loadRep();}}>刷新</Btn>}>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+        <div className="flex gap-2"><Input placeholder="邮箱地址" value={ne} onChange={e=>setNe(e.target.value)}/><Btn onClick={ve} className="flex-shrink-0">验证邮箱</Btn></div>
+        <div className="flex gap-2"><Input placeholder="域名 (example.com)" value={nd} onChange={e=>setNd(e.target.value)}/><Btn variant="success" onClick={vd} className="flex-shrink-0">验证域名</Btn></div>
+      </div>
+      <div className="overflow-x-auto"><table className="w-full">
+        <thead><tr className="border-b border-gray-100">{["实体名称","类型","验证状态","DKIM","DKIM签名"].map(h=><th key={h} className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider py-3 px-4">{h}</th>)}</tr></thead>
+        <tbody>{list.map(i=><tr key={i.identity} className="border-b border-gray-50 hover:bg-gray-50/50 transition">
+          <td className="py-3 px-4 text-sm font-medium text-gray-800">{i.identity}</td>
+          <td className="py-3 px-4 text-sm text-gray-500">{i.type==="EmailAddress"?"邮箱":"域名"}</td>
+          <td className="py-3 px-4"><Badge color={i.verification_status==="Success"?"green":"orange"}>{i.verification_status==="Success"?"已验证":"验证中"}</Badge></td>
+          <td className="py-3 px-4"><Badge color={i.dkim_status==="SUCCESS"?"green":i.dkim_status==="PENDING"?"orange":"gray"}>{i.dkim_status}</Badge></td>
+          <td className="py-3 px-4"><Badge color={i.dkim_signing?"green":"gray"}>{i.dkim_signing?"已启用":"未启用"}</Badge></td>
+        </tr>)}</tbody>
+      </table></div>
+    </Card>
+  </div>;
 }
 
 // ===== Admin: Templates =====
