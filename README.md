@@ -249,19 +249,108 @@ docker exec ses-sender-backend env | grep SES_CONFIGURATION
 
 配置完成后：
 1. 通过平台发送一批邮件
-2. 等待 5-15 分钟（CloudWatch 指标有延迟）
+2. **等待 15 分钟**（CloudWatch 指标有延迟，最短 5 分钟，建议等 15 分钟）
 3. 在"发送历史"页面点击 **"查看指标"** 按钮
 4. 弹框中会展示该批次的送达率、打开率、退信率等指标
+
+> **注意**：只有在发送邮件时 `SES_CONFIGURATION_SET` 已生效的批次，才会有指标数据。之前未配置 Configuration Set 时发送的邮件不会有监控数据。
+
+### 指标全部为 0 的排查清单
+
+如果发送邮件成功但"查看指标"弹窗中所有数据为 0，请按以下步骤逐项排查：
+
+#### 排查 1：确认 SES_CONFIGURATION_SET 环境变量已生效
+
+```bash
+# 检查后端容器内的环境变量
+docker exec ses-sender-backend env | grep SES_CONFIGURATION
+
+# 应输出类似：SES_CONFIGURATION_SET=ses-sender-tracking
+# 如果为空，说明未配置或未生效
+```
+
+> 如果为空，编辑 `.env` 或 `docker-compose.yml` 设置 `SES_CONFIGURATION_SET`，然后执行 `docker-compose down && docker-compose up -d`（注意：`restart` 不会读取新的环境变量）。
+
+#### 排查 2：确认 Configuration Set 已创建
+
+```bash
+aws sesv2 get-configuration-set \
+  --configuration-set-name <你的ConfigurationSet名称> \
+  --region <你的AWS区域>
+```
+
+如果返回 `NotFoundException`，说明还没创建，请回到上面的 Step 1 执行创建命令。
+
+#### 排查 3：确认 CloudWatch Event Destination 已配置（最常见遗漏）
+
+```bash
+aws sesv2 get-configuration-set-event-destinations \
+  --configuration-set-name <你的ConfigurationSet名称> \
+  --region <你的AWS区域>
+```
+
+检查输出中是否有 `CloudWatchDestination`，且 `DimensionConfigurations` 包含 `batch_id` 维度。**如果没有 Event Destination，SES 事件不会写入 CloudWatch，指标永远为 0。** 请执行上面的 Step 4 添加 Event Destination。
+
+#### 排查 4：确认 AWS_REGION 配置一致
+
+后端的 `AWS_REGION` 环境变量必须与 SES/CloudWatch 所在区域一致。例如如果 SES 在 `ap-southeast-1`，则：
+
+```bash
+# 检查后端配置的区域
+docker exec ses-sender-backend env | grep AWS_REGION
+
+# 应与你创建 Configuration Set 的区域一致
+```
+
+#### 排查 5：确认 VDM 已启用（影响 Open/Click 指标）
+
+```bash
+aws sesv2 get-account \
+  --region <你的AWS区域> \
+  | grep -A5 VdmAttributes
+```
+
+如果 `VdmEnabled` 不是 `ENABLED`，Open 和 Click 指标不会被追踪。请执行上面的 Step 5。
+
+#### 排查 6：确认等待了足够时间
+
+CloudWatch 指标从 SES 事件产生到可查询，通常需要 **5-15 分钟**延迟。建议发送邮件后等待 15 分钟再查看。
+
+#### 排查 7：直接在 CloudWatch 控制台验证
+
+1. 登录 AWS 控制台 → CloudWatch → Metrics → All metrics
+2. 搜索命名空间 `AWS/SES`
+3. 查看是否有 `batch_id` 维度的数据
+4. 如果 CloudWatch 控制台也没有 `batch_id` 维度的指标，说明 Event Destination 配置有问题
+
+#### 排查 8：IAM 权限
+
+确保 EC2 的 IAM Role 包含以下 CloudWatch 权限：
+
+```json
+{
+  "Effect": "Allow",
+  "Action": [
+    "cloudwatch:GetMetricStatistics",
+    "cloudwatch:ListMetrics"
+  ],
+  "Resource": "*"
+}
+```
 
 ### 常见问题
 
 | 问题 | 原因 | 解决方案 |
 |------|------|---------|
+| **指标全部为 0** | 未配置 CloudWatch Event Destination | 执行 Step 4 添加 Event Destination（最常见原因） |
+| **指标全部为 0** | AWS_REGION 不匹配 | 确保 `AWS_REGION` 与 SES/CloudWatch 所在区域一致 |
+| **指标全部为 0** | SES_CONFIGURATION_SET 未生效 | 使用 `docker-compose down && up -d` 而非 `restart` |
+| **指标全部为 0** | 数据延迟 | 等待 15 分钟后再查看 |
+| **Open/Click 为 0，其他有数据** | VDM 未启用 | 执行 Step 5 启用账户级别 VDM |
 | 配置 Configuration Set 后收不到邮件 | Suppression List 抑制了收件邮箱 | 关闭 Configuration Set 的 Suppression List |
 | 配置 Configuration Set 后收不到邮件 | Optimized Shared Delivery 延迟投递 | 关闭账户和 Configuration Set 级别的 OptimizedSharedDelivery |
 | 配置 Configuration Set 后收不到邮件 | TLS Policy 设为 REQUIRE | 改为 OPTIONAL |
 | SES 返回 Success 但邮件未送达 | Tag 值包含中文等非 ASCII 字符 | 系统已自动过滤，确保使用最新版本 |
-| 指标数据为空 | 数据延迟或未配置 Event Destination | 等待 5-15 分钟，检查 Event Destination 配置 |
 | 环境变量修改后不生效 | `docker-compose restart` 不读取新环境变量 | 使用 `docker-compose down && docker-compose up -d` |
 
 ## 数据库迁移

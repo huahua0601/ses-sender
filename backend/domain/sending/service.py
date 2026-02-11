@@ -142,7 +142,8 @@ def get_batch_metrics(batch_id: str) -> dict:
     """从 CloudWatch 获取指定批次的送达指标"""
     import boto3
     from datetime import datetime, timedelta
-    cw = boto3.client("cloudwatch", region_name="us-east-1")
+    from core.config import AWS_REGION
+    cw = boto3.client("cloudwatch", region_name=AWS_REGION)
 
     now = datetime.utcnow()
     start = now - timedelta(days=14)  # 查最近14天
