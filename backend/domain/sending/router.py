@@ -66,7 +66,10 @@ def get_batch_metrics(
     """获取指定批次的 CloudWatch 指标"""
     # 验证该批次属于当前用户
     from domain.sending.models import SendingJob
-    job = db.query(SendingJob).filter(SendingJob.batch_id == batch_id, SendingJob.user_id == current_user.id).first()
+    if current_user.is_admin:
+        job = db.query(SendingJob).filter(SendingJob.batch_id == batch_id).first()
+    else:
+        job = db.query(SendingJob).filter(SendingJob.batch_id == batch_id, SendingJob.user_id == current_user.id).first()
     if not job:
         raise HTTPException(status_code=404, detail="批次不存在")
     return service.get_batch_metrics(batch_id)

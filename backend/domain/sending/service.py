@@ -141,32 +141,84 @@ def send_bulk_email(
 def get_batch_metrics(batch_id: str) -> dict:
     """从 CloudWatch 获取指定批次的送达指标"""
     import boto3
+    import logging
     from datetime import datetime, timedelta
     from core.config import AWS_REGION
+
+    logger = logging.getLogger("ses-sender.metrics")
+    logger.setLevel(logging.DEBUG)
+
+    logger.info("=" * 60)
+    logger.info(f"[Metrics] 开始查询 batch_id={batch_id}")
+    logger.info(f"[Metrics] AWS_REGION={AWS_REGION}")
+
     cw = boto3.client("cloudwatch", region_name=AWS_REGION)
 
     now = datetime.utcnow()
     start = now - timedelta(days=14)  # 查最近14天
 
+    logger.info(f"[Metrics] 查询时间范围: {start.isoformat()} ~ {now.isoformat()}")
+
+    # 先列出 AWS/SES 命名空间下 batch_id 维度有哪些指标，帮助排查
+    try:
+        list_resp = cw.list_metrics(
+            Namespace="AWS/SES",
+            Dimensions=[{"Name": "batch_id", "Value": batch_id}],
+        )
+        available_metrics = [m["MetricName"] for m in list_resp.get("Metrics", [])]
+        logger.info(f"[Metrics] CloudWatch 中该 batch_id 可用的指标: {available_metrics}")
+        if not available_metrics:
+            logger.warning(f"[Metrics] ⚠️ CloudWatch 中没有找到 batch_id={batch_id} 的任何指标!")
+            logger.warning(f"[Metrics] 可能原因: 1) Event Destination 未配置 2) Region 不匹配 3) 数据尚未到达")
+
+            # 额外检查: 列出 AWS/SES 下所有 batch_id 维度的指标（取前5个）
+            all_batch_resp = cw.list_metrics(
+                Namespace="AWS/SES",
+                MetricName="Send",
+                Dimensions=[{"Name": "batch_id"}],
+            )
+            all_batches = [
+                next((d["Value"] for d in m["Dimensions"] if d["Name"] == "batch_id"), "?")
+                for m in all_batch_resp.get("Metrics", [])[:5]
+            ]
+            logger.info(f"[Metrics] CloudWatch 中存在的 batch_id 样本 (前5个): {all_batches}")
+    except Exception as e:
+        logger.error(f"[Metrics] list_metrics 调用失败: {e}")
+
     metrics_to_fetch = ["Send", "Delivery", "Bounce", "Complaint", "Open", "Click", "Reject"]
     result = {}
+    debug_raw = {}
 
     for metric_name in metrics_to_fetch:
         try:
-            resp = cw.get_metric_statistics(
-                Namespace="AWS/SES",
-                MetricName=metric_name,
-                Dimensions=[{"Name": "batch_id", "Value": batch_id}],
-                StartTime=start,
-                EndTime=now,
-                Period=86400 * 14,  # 整个时间段汇总
-                Statistics=["Sum"],
-            )
+            query_params = {
+                "Namespace": "AWS/SES",
+                "MetricName": metric_name,
+                "Dimensions": [{"Name": "batch_id", "Value": batch_id}],
+                "StartTime": start,
+                "EndTime": now,
+                "Period": 86400 * 14,
+                "Statistics": ["Sum"],
+            }
+            resp = cw.get_metric_statistics(**query_params)
             datapoints = resp.get("Datapoints", [])
             total = sum(dp.get("Sum", 0) for dp in datapoints)
             result[metric_name.lower()] = int(total)
-        except Exception:
+
+            # 记录原始响应
+            debug_raw[metric_name] = {
+                "datapoints_count": len(datapoints),
+                "datapoints": [{"Sum": dp.get("Sum"), "Timestamp": str(dp.get("Timestamp"))} for dp in datapoints],
+                "total": int(total),
+            }
+            if datapoints:
+                logger.info(f"[Metrics] {metric_name}: {int(total)} (datapoints={len(datapoints)})")
+            else:
+                logger.debug(f"[Metrics] {metric_name}: 0 (无数据点)")
+        except Exception as e:
+            logger.error(f"[Metrics] 查询 {metric_name} 失败: {e}")
             result[metric_name.lower()] = 0
+            debug_raw[metric_name] = {"error": str(e)}
 
     # 计算比率
     send = result.get("send", 0)
@@ -175,6 +227,18 @@ def get_batch_metrics(batch_id: str) -> dict:
     result["delivery_rate"] = round(delivery / send * 100, 1) if send > 0 else 0
     result["open_rate"] = round(opens / delivery * 100, 1) if delivery > 0 else 0
     result["bounce_rate"] = round(result.get("bounce", 0) / send * 100, 1) if send > 0 else 0
+
+    logger.info(f"[Metrics] 最终结果: send={send}, delivery={delivery}, open={opens}, bounce={result.get('bounce', 0)}")
+    logger.info("=" * 60)
+
+    # 将 debug 信息附加到返回结果中，方便前端/API 排查
+    result["_debug"] = {
+        "region": AWS_REGION,
+        "batch_id": batch_id,
+        "time_range": f"{start.isoformat()} ~ {now.isoformat()}",
+        "available_metrics_in_cloudwatch": available_metrics if 'available_metrics' in dir() else "查询失败",
+        "raw_responses": debug_raw,
+    }
 
     return result
 

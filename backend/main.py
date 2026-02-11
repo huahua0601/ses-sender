@@ -10,6 +10,7 @@ SES Sender API - 应用入口
 """
 
 import sys
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from alembic.config import Config as AlembicConfig
@@ -72,6 +73,17 @@ finally:
     db.close()
 
 # --- FastAPI App ---
+# --- 配置日志 ---
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+)
+# 降低第三方库的日志级别，避免过多噪音
+logging.getLogger("botocore").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("boto3").setLevel(logging.WARNING)
+
 app = FastAPI(
     title="SES Sender API",
     description="前后端分离的 AWS SES 邮件发送管理平台",
