@@ -619,8 +619,8 @@ function TemplateManager({apiPrefix}:{apiPrefix:string}) {
     </body></html>`;
   };
 
-  // 编辑区域组件
-  const EditorPanel = ({isCreate}:{isCreate:boolean}) => (
+  // 编辑区域渲染函数（不作为组件，避免重渲染导致输入框失焦）
+  const renderEditor = (isCreate:boolean) => (
     <div className="space-y-4">
       {isCreate && <div><label className="text-sm font-medium text-gray-700 mb-1.5 block">模版名称</label><Input placeholder="输入模版名称" value={f.name} onChange={e=>setF({...f,name:e.target.value})}/></div>}
       {!isCreate && <div><label className="text-sm font-medium text-gray-700 mb-1.5 block">模版名称</label><Input value={f.name} disabled className="bg-gray-50 opacity-60"/></div>}
@@ -712,12 +712,12 @@ function TemplateManager({apiPrefix}:{apiPrefix:string}) {
   return <>
     {/* 新建弹框 */}
     <Modal open={showCreate} onClose={()=>setShowCreate(false)} title="新建邮件模版" width={1000}>
-      <EditorPanel isCreate={true}/>
+      {renderEditor(true)}
     </Modal>
 
     {/* 编辑弹框 */}
     <Modal open={showEdit} onClose={()=>setShowEdit(false)} title={`编辑模版 - ${f.name}`} width={1000}>
-      <EditorPanel isCreate={false}/>
+      {renderEditor(false)}
     </Modal>
 
     <Card title="邮件模版" extra={<Btn size="sm" onClick={()=>{setF({name:"",subject:"",html_body:""});setShowCreate(true);setPreviewTab("split");}}>+ 新建模版</Btn>}>
