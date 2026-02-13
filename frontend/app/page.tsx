@@ -870,9 +870,6 @@ function SendingHistory() {
   const [metricsJob,setMetricsJob]=useState(null);
   const [metrics,setMetrics]=useState(null);
   const [metricsLoading,setMetricsLoading]=useState(false);
-  const [detailsTab,setDetailsTab]=useState<"metrics"|"details">("metrics");
-  const [details,setDetails]=useState([]);
-  const [detailsLoading,setDetailsLoading]=useState(false);
 
   const load=async(p=page)=>{
     try{const d=await(await fetch(`${API}/sending-jobs?page=${p}&page_size=10`,{headers:authH(token)})).json();setJobs(d.items||[]);setTotal(d.total||0);setTotalPages(d.total_pages||1);setPage(d.page||1);}catch{setJobs([]);}
@@ -880,22 +877,19 @@ function SendingHistory() {
   useEffect(()=>{load(1);},[]);
 
   const openMetrics=async(job)=>{
-    setMetricsJob(job);setMetrics(null);setDetails([]);setShowMetrics(true);setMetricsLoading(true);setDetailsTab("details");
-    // 并行加载指标和明细
+    setMetricsJob(job);setMetrics(null);setShowMetrics(true);setMetricsLoading(true);
     try{
-      const [mRes,dRes]=await Promise.all([
-        fetch(`${API}/sending-jobs/${job.batch_id}/metrics`,{headers:authH(token)}),
-        fetch(`${API}/sending-jobs/${job.batch_id}/details`,{headers:authH(token)}),
-      ]);
+      const mRes=await fetch(`${API}/sending-jobs/${job.batch_id}/metrics`,{headers:authH(token)});
       const mData=await mRes.json(); setMetrics(mData);
-      const dData=await dRes.json(); setDetails(Array.isArray(dData)?dData:[]);
-    }catch{setMetrics(null);setDetails([]);}
+    }catch{setMetrics(null);}
     finally{setMetricsLoading(false);}
   };
 
   const statusBadge=(s)=>{
     if(s==="success") return <Badge color="green">发送成功</Badge>;
     if(s==="partial") return <Badge color="orange">部分成功</Badge>;
+    if(s==="queued") return <Badge color="gray">排队中</Badge>;
+    if(s==="sending") return <Badge color="blue">发送中</Badge>;
     return <Badge color="red">发送失败</Badge>;
   };
 
@@ -907,33 +901,10 @@ function SendingHistory() {
     </div>
   );
 
-  // 邮件明细状态标签
-  const sendStatusBadge=(s)=>{
-    if(s==="Success") return <Badge color="green">已接受</Badge>;
-    if(s==="MessageRejected") return <Badge color="red">被拒绝</Badge>;
-    if(s==="Pending") return <Badge color="gray">等待中</Badge>;
-    return <Badge color="orange">{s}</Badge>;
-  };
-  const deliveryBadge=(d)=>{
-    if(!d) return <span className="text-xs text-gray-300">—</span>;
-    if(d==="Delivery") return <Badge color="green">已送达</Badge>;
-    if(d==="Sent") return <Badge color="blue">已发出</Badge>;
-    if(d==="Bounce") return <Badge color="red">退信</Badge>;
-    if(d==="Reject") return <Badge color="red">被拒绝</Badge>;
-    return <Badge color="gray">{d}</Badge>;
-  };
-
   return <>
-    <Modal open={showMetrics} onClose={()=>setShowMetrics(false)} title={`批次详情 - ${metricsJob?.batch_id||""}`} width={960}>
+    <Modal open={showMetrics} onClose={()=>setShowMetrics(false)} title={`批次指标 - ${metricsJob?.batch_id||""}`} width={720}>
       {metricsLoading?<div className="text-center py-12 text-gray-400">加载中...</div>:<div>
-        {/* Tab 切换 */}
-        <div className="flex gap-1 mb-4 border-b border-gray-100">
-          {([["details","📋 邮件明细"],["metrics","📊 聚合指标"]] as const).map(([id,label])=>(
-            <button key={id} onClick={()=>setDetailsTab(id)} className={`px-4 py-2 text-sm border-b-2 transition-all ${detailsTab===id?"border-indigo-500 text-indigo-600 font-medium":"border-transparent text-gray-400 hover:text-gray-600"}`}>{label}</button>
-          ))}
-        </div>
-
-        {/* 基本信息 - 始终显示 */}
+        {/* 基本信息 */}
         <div className="grid grid-cols-2 gap-3 text-sm mb-4">
           <div><span className="text-gray-400">模版：</span><span className="text-gray-800">{metricsJob?.template_name}</span></div>
           <div><span className="text-gray-400">客群：</span><span className="text-gray-800">{metricsJob?.group_name}</span></div>
@@ -941,51 +912,8 @@ function SendingHistory() {
           <div><span className="text-gray-400">发送时间：</span><span className="text-gray-800">{metricsJob?.created_at?new Date(metricsJob.created_at).toLocaleString():"-"}</span></div>
         </div>
 
-        {/* 邮件明细 Tab */}
-        {detailsTab==="details"&&(
-          <div>
-            {details.length>0?(
-              <div className="overflow-x-auto border border-gray-100 rounded-xl">
-                <table className="w-full">
-                  <thead><tr className="bg-gray-50 border-b border-gray-100">
-                    {["收件人","发送状态","送达状态","打开","点击","送达时间","打开时间"].map(h=><th key={h} className="text-left text-xs font-medium text-gray-500 py-2.5 px-3 whitespace-nowrap">{h}</th>)}
-                  </tr></thead>
-                  <tbody>{details.map((d,i)=><tr key={d.id||i} className="border-b border-gray-50 hover:bg-gray-50/50 transition">
-                    <td className="py-2.5 px-3 text-sm text-gray-700 font-mono">{d.recipient}</td>
-                    <td className="py-2.5 px-3">{sendStatusBadge(d.send_status)}</td>
-                    <td className="py-2.5 px-3">
-                      {deliveryBadge(d.delivery_status)}
-                      {d.bounce_type&&<span className="ml-1 text-xs text-red-400">({d.bounce_type}{d.bounce_subtype?`/${d.bounce_subtype}`:""})</span>}
-                    </td>
-                    <td className="py-2.5 px-3 text-center">{d.open_count>0?<span className="text-green-600 font-medium">{d.open_count}次</span>:<span className="text-gray-300">—</span>}</td>
-                    <td className="py-2.5 px-3 text-center">{d.click_count>0?<span className="text-blue-600 font-medium">{d.click_count}次</span>:<span className="text-gray-300">—</span>}</td>
-                    <td className="py-2.5 px-3 text-xs text-gray-400 whitespace-nowrap">{d.delivery_time?new Date(d.delivery_time).toLocaleString():"—"}</td>
-                    <td className="py-2.5 px-3 text-xs text-gray-400 whitespace-nowrap">{d.first_open_time?new Date(d.first_open_time).toLocaleString():"—"}</td>
-                  </tr>)}</tbody>
-                </table>
-                {/* 汇总 */}
-                <div className="bg-gray-50 px-3 py-2 flex gap-4 text-xs text-gray-500">
-                  <span>共 {details.length} 封</span>
-                  <span>已接受: {details.filter(d=>d.send_status==="Success").length}</span>
-                  <span>已送达: {details.filter(d=>d.delivery_status==="Delivery").length}</span>
-                  <span>退信: {details.filter(d=>d.delivery_status==="Bounce").length}</span>
-                  <span>已打开: {details.filter(d=>d.open_count>0).length}</span>
-                  <span>已点击: {details.filter(d=>d.click_count>0).length}</span>
-                </div>
-              </div>
-            ):(
-              <div className="text-center py-8 text-gray-400 text-sm">
-                <p>暂无邮件明细数据</p>
-                <p className="mt-1 text-xs">新发送的邮件会自动记录明细，历史邮件没有明细记录</p>
-              </div>
-            )}
-            <p className="text-xs text-gray-400 mt-3">送达/打开/点击状态通过 SNS Webhook 实时更新。如未配置 SNS Event Destination，则只有"发送状态"列有数据。</p>
-          </div>
-        )}
-
-        {/* 聚合指标 Tab */}
-        {detailsTab==="metrics"&&(
-          metrics?<div className="space-y-5">
+        {/* 聚合指标 */}
+        {metrics?<div className="space-y-5">
             <div className="grid grid-cols-3 gap-3">
               {metricCard("发送数",metrics.send,undefined,"#3C50E0")}
               {metricCard("送达数",metrics.delivery,metrics.delivery_rate,"#10B981")}
@@ -1003,24 +931,31 @@ function SendingHistory() {
               <div><div className="flex justify-between text-xs mb-1"><span className="text-gray-500">退信率</span><span className="font-medium" style={{color:"#EF4444"}}>{metrics.bounce_rate}%</span></div><div className="h-2 bg-gray-100 rounded-full overflow-hidden"><div className="h-full rounded-full" style={{width:`${metrics.bounce_rate}%`,background:"#EF4444"}}/></div></div>
             </div>
             <p className="text-xs text-gray-400">数据来源：AWS CloudWatch（指标可能有 5-15 分钟延迟）</p>
-          </div>:<div className="text-center py-12 text-gray-400">暂无指标数据（需配置 Configuration Set 和 CloudWatch Event Destination）</div>
-        )}
+          </div>:<div className="text-center py-12 text-gray-400">暂无指标数据（需配置 Configuration Set 和 CloudWatch Event Destination）</div>}
       </div>}
     </Modal>
 
     <Card title="发送历史" extra={<Btn variant="outline" size="sm" onClick={()=>load(1)}>刷新</Btn>}>
       <div className="overflow-x-auto"><table className="w-full">
         <thead><tr className="border-b border-gray-100">{["批次ID","模版","客群","发送邮箱","联系人数","状态","发送时间","操作"].map(h=><th key={h} className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider py-3 px-3 whitespace-nowrap">{h}</th>)}</tr></thead>
-        <tbody>{jobs.map(j=><tr key={j.id} className="border-b border-gray-50 hover:bg-gray-50/50 transition">
+        <tbody>{jobs.map(j=>{
+          const isSending=j.status==="queued"||j.status==="sending";
+          const prog=j.total_contacts>0?Math.round((j.sent_count||0)/j.total_contacts*100):0;
+          return <tr key={j.id} className="border-b border-gray-50 hover:bg-gray-50/50 transition">
           <td className="py-3 px-3 text-xs text-gray-500 font-mono">{j.batch_id}</td>
           <td className="py-3 px-3 text-sm text-gray-800">{j.template_name}</td>
           <td className="py-3 px-3 text-sm text-gray-800">{j.group_name}</td>
           <td className="py-3 px-3 text-sm text-gray-500">{j.source_email}</td>
-          <td className="py-3 px-3 text-sm text-gray-600 text-center">{j.total_contacts}</td>
-          <td className="py-3 px-3">{statusBadge(j.status)}</td>
+          <td className="py-3 px-3 text-sm text-gray-600 text-center">{isSending?<span>{j.sent_count||0}/{j.total_contacts}</span>:j.total_contacts}</td>
+          <td className="py-3 px-3">
+            <div className="flex flex-col gap-1">
+              {statusBadge(j.status)}
+              {isSending&&<div className="w-24"><div className="h-1.5 bg-gray-200 rounded-full overflow-hidden"><div className="h-full bg-indigo-500 rounded-full transition-all duration-500" style={{width:`${prog}%`}}/></div><span className="text-[10px] text-gray-400">{prog}%</span></div>}
+            </div>
+          </td>
           <td className="py-3 px-3 text-xs text-gray-400 whitespace-nowrap">{j.created_at?new Date(j.created_at).toLocaleString():"-"}</td>
-          <td className="py-3 px-3"><Btn variant="primary" size="sm" onClick={()=>openMetrics(j)}>查看详情</Btn></td>
-        </tr>)}</tbody>
+          <td className="py-3 px-3"><Btn variant="primary" size="sm" onClick={()=>openMetrics(j)} disabled={isSending}>查看指标</Btn></td>
+        </tr>})}</tbody>
       </table></div>
       {jobs.length===0&&<p className="text-center py-8 text-sm text-gray-400">暂无发送记录</p>}
       <Pager page={page} totalPages={totalPages} total={total} onPageChange={p=>load(p)}/>
