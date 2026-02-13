@@ -1,5 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
+import json
+import logging
 
 from core.database import get_db
 from core.deps import get_current_user, require_admin
@@ -8,6 +11,7 @@ from domain.sending.schemas import BulkSendRequest, TestEmailRequest
 from domain.sending import service
 
 router = APIRouter(tags=["邮件发送"])
+logger = logging.getLogger("ses-sender.webhook")
 
 
 # ========== 管理员：测试邮件 ==========
@@ -64,7 +68,6 @@ def get_batch_metrics(
     db: Session = Depends(get_db),
 ):
     """获取指定批次的 CloudWatch 指标"""
-    # 验证该批次属于当前用户
     from domain.sending.models import SendingJob
     if current_user.is_admin:
         job = db.query(SendingJob).filter(SendingJob.batch_id == batch_id).first()
@@ -75,6 +78,23 @@ def get_batch_metrics(
     return service.get_batch_metrics(batch_id)
 
 
+@router.get("/sending-jobs/{batch_id}/details")
+def get_batch_details(
+    batch_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """获取指定批次的每封邮件发送明细"""
+    from domain.sending.models import SendingJob
+    if current_user.is_admin:
+        job = db.query(SendingJob).filter(SendingJob.batch_id == batch_id).first()
+    else:
+        job = db.query(SendingJob).filter(SendingJob.batch_id == batch_id, SendingJob.user_id == current_user.id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="批次不存在")
+    return service.get_batch_details(db, batch_id)
+
+
 @router.get("/sending-jobs")
 def list_sending_jobs(
     page: int = Query(1, ge=1),
@@ -83,3 +103,54 @@ def list_sending_jobs(
     db: Session = Depends(get_db),
 ):
     return service.list_sending_jobs(db, current_user.id, page, page_size)
+
+
+@router.get("/email-details")
+def list_email_details(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    recipient: str = Query("", description="收件人搜索"),
+    batch_id: str = Query("", description="批次ID搜索"),
+    send_status: str = Query("", description="发送状态筛选"),
+    delivery_status: str = Query("", description="送达状态筛选"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """全局邮件明细查询（支持搜索、筛选、分页）"""
+    return service.list_email_details(
+        db=db,
+        user_id=current_user.id,
+        is_admin=current_user.is_admin,
+        page=page,
+        page_size=page_size,
+        recipient=recipient.strip(),
+        batch_id=batch_id.strip(),
+        send_status=send_status.strip(),
+        delivery_status=delivery_status.strip(),
+    )
+
+
+@router.get("/sending-jobs/{batch_id}/progress")
+def get_job_progress(
+    batch_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """查询发送任务的实时进度"""
+    from domain.sending.models import SendingJob
+    if current_user.is_admin:
+        job = db.query(SendingJob).filter(SendingJob.batch_id == batch_id).first()
+    else:
+        job = db.query(SendingJob).filter(SendingJob.batch_id == batch_id, SendingJob.user_id == current_user.id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="批次不存在")
+    return {
+        "batch_id": job.batch_id,
+        "status": job.status,
+        "total_contacts": job.total_contacts,
+        "sent_count": job.sent_count or 0,
+        "total_batches": job.total_batches or 0,
+        "progress": round((job.sent_count or 0) / max(job.total_contacts, 1) * 100, 1),
+        "error_message": job.error_message,
+        "finished_at": job.finished_at.isoformat() if job.finished_at else None,
+    }

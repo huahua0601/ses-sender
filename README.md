@@ -218,17 +218,100 @@ aws sesv2 put-account-vdm-attributes \
   --region us-east-1
 ```
 
-#### Step 6: 配置环境变量并重启
+#### Step 6: 配置 SNS + SQS Event Destination（用于每封邮件的送达/打开/退信追踪）
+
+本系统使用 **SNS → SQS → 后端轮询** 架构接收 SES 事件，无需后端暴露公网端口。
+
+**一键执行：**
 
 ```bash
-# 编辑 docker-compose.yml 或 .env
+# 参数1: AWS 区域（必填）  参数2: Configuration Set 名称（可选，默认 ses-sender-tracking）
+./setup-ses-events.sh us-east-1
+# 或
+./setup-ses-events.sh ap-northeast-1 my-config-set
+```
+
+脚本会自动完成以下操作：
+1. 获取你的 AWS 账户 ID
+2. 创建 SNS Topic (`ses-sender-events`)
+3. 创建 SQS 队列 (`ses-sender-events-queue`)，配置长轮询和消息保留
+4. 设置 SQS 队列策略，允许 SNS 向其发送消息
+5. 创建 SNS → SQS 订阅
+6. 在 SES Configuration Set 上添加 SNS Event Destination（追踪 SEND/DELIVERY/BOUNCE/COMPLAINT/OPEN/CLICK/REJECT）
+
+执行完成后，脚本会输出需要添加到 `.env` 的变量。
+
+<details>
+<summary>如需手动执行，点击展开各步骤命令</summary>
+
+```bash
+# 6.1 创建 SNS Topic
+aws sns create-topic \
+  --name ses-sender-events \
+  --region <REGION>
+
+# 6.2 创建 SQS 队列
+aws sqs create-queue \
+  --queue-name ses-sender-events-queue \
+  --attributes '{
+    "ReceiveMessageWaitTimeSeconds": "20",
+    "VisibilityTimeout": "300",
+    "MessageRetentionPeriod": "1209600"
+  }' \
+  --region <REGION>
+
+# 6.3 获取 SQS 队列 ARN
+aws sqs get-queue-attributes \
+  --queue-url <QUEUE_URL> \
+  --attribute-names QueueArn \
+  --region <REGION>
+
+# 6.4 设置 SQS 队列策略（允许 SNS 向 SQS 发送消息）
+# 参考 setup-ses-events.sh 中的策略 JSON
+
+# 6.5 订阅 SNS Topic → SQS
+aws sns subscribe \
+  --topic-arn <TOPIC_ARN> \
+  --protocol sqs \
+  --notification-endpoint <QUEUE_ARN> \
+  --attributes '{"RawMessageDelivery": "false"}' \
+  --region <REGION>
+
+# 6.6 添加 SNS Event Destination 到 Configuration Set
+aws sesv2 create-configuration-set-event-destination \
+  --configuration-set-name <CONFIG_SET> \
+  --event-destination-name sns-events \
+  --event-destination '{
+    "Enabled": true,
+    "MatchingEventTypes": ["SEND", "DELIVERY", "BOUNCE", "COMPLAINT", "OPEN", "CLICK", "REJECT"],
+    "SnsDestination": {
+      "TopicArn": "<TOPIC_ARN>"
+    }
+  }' \
+  --region <REGION>
+```
+
+</details>
+
+#### Step 7: 配置环境变量并重启
+
+```bash
+# 编辑 .env 文件，添加 SQS_QUEUE_URL
 SES_CONFIGURATION_SET=ses-sender-tracking
+SQS_QUEUE_URL=https://sqs.us-east-1.amazonaws.com/YOUR_ACCOUNT_ID/ses-sender-events-queue
 
 # 重新创建容器（restart 不会读取新的环境变量）
 docker-compose down && docker-compose up -d
 ```
 
-#### Step 7: 验证配置
+启动后查看后端日志确认 SQS Worker 是否正常启动：
+
+```bash
+docker-compose logs -f backend | grep "SQS Worker"
+# 应看到: [SQS Worker] 启动，队列: https://sqs.us-east-1.amazonaws.com/...
+```
+
+#### Step 8: 验证配置
 
 ```bash
 # 检查 Configuration Set 配置
@@ -420,7 +503,12 @@ EC2 实例的 IAM Role 需要以下权限：
     "ses:SendEmail",
     "ses:SendBulkTemplatedEmail",
     "cloudwatch:GetMetricStatistics",
-    "cloudwatch:ListMetrics"
+    "cloudwatch:ListMetrics",
+    "sns:CreateTopic",
+    "sns:Subscribe",
+    "sqs:ReceiveMessage",
+    "sqs:DeleteMessage",
+    "sqs:GetQueueAttributes"
   ],
   "Resource": "*"
 }

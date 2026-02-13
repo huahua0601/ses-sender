@@ -9,8 +9,8 @@ from core.config import SES_CONFIGURATION_SET
 from domain.audience.models import ContactGroup, Contact
 from domain.template.models import EmailTemplate
 from domain.template.service import get_ses_template_name
-from domain.sending.models import SendingJob
-from domain.sending.schemas import TestEmailRequest, SendingJobOut
+from domain.sending.models import SendingJob, SendingJobDetail
+from domain.sending.schemas import TestEmailRequest, SendingJobOut, SendingJobDetailOut
 
 
 def send_test_email(req: TestEmailRequest) -> dict:
@@ -39,7 +39,11 @@ def send_bulk_email(
     group_id: int,
     user_id: int,
 ) -> dict:
-    """普通用户批量发送邮件（附加 VDM 追踪标签）"""
+    """普通用户批量发送邮件（异步模式：立即返回，后台线程执行发送）"""
+    import threading
+    import logging
+    logger = logging.getLogger("ses-sender.sending")
+
     if not source_email:
         raise HTTPException(status_code=400, detail="您尚未配置发送邮箱，请联系管理员")
 
@@ -63,78 +67,189 @@ def send_bulk_email(
     # 生成唯一批次 ID
     batch_id = f"batch-{uuid.uuid4().hex[:12]}"
 
-    # 构建发送列表
-    destinations = [
-        {
-            "Destination": {"ToAddresses": [c.email]},
-            "ReplacementTemplateData": f'{{"name": "{c.name or "Customer"}"}}',
-        }
-        for c in contacts
-    ]
+    # 提前提取联系人数据（避免后台线程使用已关闭的 Session）
+    contact_list = [{"email": c.email, "name": c.name or "Customer"} for c in contacts]
+    tpl_name = tpl.name if tpl else "unknown"
+    group_name = group.name
 
-    # 构建发送参数
-    send_params = {
-        "Source": source_email,
-        "Template": ses_template_name,
-        "DefaultTemplateData": '{"name": "Customer"}',
-    }
-
-    # 附加 Configuration Set 和 Tags（用于 VDM 追踪）
-    # 注意：SES Tag 值只允许 ASCII 字符，中文需过滤
-    def _ascii_tag(val: str) -> str:
-        return "".join(c if ord(c) < 128 and c not in ' "\'\\' else "_" for c in val)[:256] or "unknown"
-
-    if SES_CONFIGURATION_SET:
-        send_params["ConfigurationSetName"] = SES_CONFIGURATION_SET
-        send_params["DefaultTags"] = [
-            {"Name": "batch_id", "Value": batch_id},
-            {"Name": "user_id", "Value": str(user_id)},
-            {"Name": "group_name", "Value": _ascii_tag(group.name)},
-            {"Name": "template_name", "Value": _ascii_tag(tpl.name if tpl else "unknown")},
-        ]
-
-    # 分批发送（SES 限制每批 50 封）
-    results = []
-    error_msg = None
-    status = "success"
-    try:
-        for i in range(0, len(destinations), 50):
-            batch = destinations[i: i + 50]
-            response = ses_client.send_bulk_templated_email(
-                Destinations=batch,
-                **send_params,
-            )
-            results.append(response)
-    except Exception as e:
-        error_msg = str(e)
-        status = "failed" if not results else "partial"
-
-    # 记录发送历史
+    # 创建发送任务（状态：排队中）
     job = SendingJob(
         user_id=user_id,
         batch_id=batch_id,
-        template_name=tpl.name if tpl else "unknown",
-        group_name=group.name,
+        template_name=tpl_name,
+        group_name=group_name,
         source_email=source_email,
-        total_contacts=len(contacts),
-        total_batches=len(results),
-        status=status,
-        error_message=error_msg,
+        total_contacts=len(contact_list),
+        sent_count=0,
+        total_batches=0,
+        status="queued",
         configuration_set=SES_CONFIGURATION_SET or None,
     )
     db.add(job)
+
+    # 预先创建每封邮件的明细记录（状态：等待中）
+    for c in contact_list:
+        db.add(SendingJobDetail(
+            job_id=0,  # 临时，flush 后更新
+            batch_id=batch_id,
+            recipient=c["email"],
+            send_status="Pending",
+        ))
+    db.flush()
+
+    # 更新 detail 的 job_id
+    db.query(SendingJobDetail).filter(
+        SendingJobDetail.batch_id == batch_id,
+        SendingJobDetail.job_id == 0,
+    ).update({"job_id": job.id})
     db.commit()
 
-    if status == "failed":
-        raise HTTPException(status_code=500, detail=error_msg)
+    job_id = job.id
+
+    # ===== 后台线程：异步执行发送 =====
+    def _do_send():
+        from core.database import SessionLocal
+        bg_db = SessionLocal()
+        try:
+            bg_job = bg_db.query(SendingJob).filter(SendingJob.id == job_id).first()
+            if not bg_job:
+                logger.error(f"[Async Send] Job {job_id} not found")
+                return
+
+            bg_job.status = "sending"
+            bg_db.commit()
+            logger.info(f"[Async Send] 开始发送 batch={batch_id}, 联系人={len(contact_list)}")
+
+            # 构建发送参数
+            send_params = {
+                "Source": source_email,
+                "Template": ses_template_name,
+                "DefaultTemplateData": '{"name": "Customer"}',
+            }
+
+            def _ascii_tag(val: str) -> str:
+                return "".join(c if ord(c) < 128 and c not in ' "\'\\' else "_" for c in val)[:256] or "unknown"
+
+            if SES_CONFIGURATION_SET:
+                send_params["ConfigurationSetName"] = SES_CONFIGURATION_SET
+                send_params["DefaultTags"] = [
+                    {"Name": "batch_id", "Value": batch_id},
+                    {"Name": "user_id", "Value": str(user_id)},
+                    {"Name": "group_name", "Value": _ascii_tag(group_name)},
+                    {"Name": "template_name", "Value": _ascii_tag(tpl_name)},
+                ]
+
+            # 构建发送列表
+            destinations = [
+                {
+                    "Destination": {"ToAddresses": [c["email"]]},
+                    "ReplacementTemplateData": f'{{"name": "{c["name"]}"}}',
+                }
+                for c in contact_list
+            ]
+
+            total_batches = 0
+            total_sent = 0
+            error_msg = None
+            has_failure = False
+
+            for i in range(0, len(destinations), 50):
+                batch = destinations[i: i + 50]
+                batch_contacts = contact_list[i: i + 50]
+                try:
+                    response = ses_client.send_bulk_templated_email(
+                        Destinations=batch,
+                        **send_params,
+                    )
+                    total_batches += 1
+
+                    # 更新每封邮件的状态
+                    ses_statuses = response.get("Status", [])
+                    for idx, ses_status in enumerate(ses_statuses):
+                        recipient = batch_contacts[idx]["email"] if idx < len(batch_contacts) else "unknown"
+                        msg_id = ses_status.get("MessageId")
+                        s_status = ses_status.get("Status", "Unknown")
+                        s_error = ses_status.get("Error")
+
+                        detail = bg_db.query(SendingJobDetail).filter(
+                            SendingJobDetail.batch_id == batch_id,
+                            SendingJobDetail.recipient == recipient,
+                        ).first()
+                        if detail:
+                            detail.send_status = s_status
+                            detail.message_id = msg_id
+                            detail.send_error = s_error
+
+                        if s_status != "Success":
+                            has_failure = True
+
+                    total_sent += len(batch)
+
+                    # 实时更新进度
+                    bg_job.sent_count = total_sent
+                    bg_job.total_batches = total_batches
+                    bg_db.commit()
+                    logger.info(f"[Async Send] batch={batch_id} 进度: {total_sent}/{len(contact_list)}")
+
+                except Exception as e:
+                    error_msg = str(e)
+                    has_failure = True
+                    logger.error(f"[Async Send] batch={batch_id} 第{total_batches+1}批发送失败: {e}")
+
+                    # 标记未发送的邮件为失败
+                    for c in batch_contacts:
+                        detail = bg_db.query(SendingJobDetail).filter(
+                            SendingJobDetail.batch_id == batch_id,
+                            SendingJobDetail.recipient == c["email"],
+                            SendingJobDetail.send_status == "Pending",
+                        ).first()
+                        if detail:
+                            detail.send_status = "Failed"
+                            detail.send_error = error_msg
+                    bg_db.commit()
+                    break  # 出错后停止
+
+            # 更新最终状态
+            from datetime import datetime as dt
+            bg_job.total_batches = total_batches
+            bg_job.sent_count = total_sent
+            bg_job.finished_at = dt.utcnow()
+            if error_msg and total_batches == 0:
+                bg_job.status = "failed"
+                bg_job.error_message = error_msg
+            elif has_failure:
+                bg_job.status = "partial"
+                bg_job.error_message = error_msg
+            else:
+                bg_job.status = "success"
+            bg_db.commit()
+            logger.info(f"[Async Send] 完成 batch={batch_id}, status={bg_job.status}, sent={total_sent}/{len(contact_list)}")
+
+        except Exception as e:
+            logger.error(f"[Async Send] 未知异常 batch={batch_id}: {e}")
+            try:
+                bg_job = bg_db.query(SendingJob).filter(SendingJob.id == job_id).first()
+                if bg_job:
+                    bg_job.status = "failed"
+                    bg_job.error_message = str(e)
+                    from datetime import datetime as dt
+                    bg_job.finished_at = dt.utcnow()
+                    bg_db.commit()
+            except Exception:
+                pass
+        finally:
+            bg_db.close()
+
+    # 启动后台线程
+    thread = threading.Thread(target=_do_send, daemon=True)
+    thread.start()
 
     return {
-        "status": status,
+        "status": "queued",
         "batch_id": batch_id,
         "source": source_email,
-        "batches": len(results),
-        "total_contacts": len(contacts),
-        "configuration_set": SES_CONFIGURATION_SET or "未配置",
+        "total_contacts": len(contact_list),
+        "message": "发送任务已创建，正在后台执行",
     }
 
 
@@ -253,9 +368,11 @@ def list_sending_jobs(db: Session, user_id: int, page: int = 1, page_size: int =
     items = [SendingJobOut(
         id=r.id, batch_id=r.batch_id, template_name=r.template_name,
         group_name=r.group_name, source_email=r.source_email,
-        total_contacts=r.total_contacts, total_batches=r.total_batches,
+        total_contacts=r.total_contacts, sent_count=r.sent_count or 0,
+        total_batches=r.total_batches,
         status=r.status, error_message=r.error_message,
         configuration_set=r.configuration_set, created_at=r.created_at,
+        finished_at=r.finished_at,
     ) for r in rows]
 
     return {"items": items, "total": total, "page": page, "page_size": page_size, "total_pages": total_pages}
@@ -350,3 +467,176 @@ def get_admin_all_jobs(db: Session, page: int = 1, page_size: int = 15) -> dict:
         })
 
     return {"items": items, "total": total, "page": page, "page_size": page_size, "total_pages": total_pages}
+
+
+# ========================
+# SNS Webhook: 处理 SES 事件
+# ========================
+
+def process_ses_event(event_data: dict, db: Session):
+    """处理来自 SNS 的 SES 事件通知"""
+    import logging
+    logger = logging.getLogger("ses-sender.webhook")
+
+    event_type = event_data.get("eventType") or event_data.get("notificationType")
+    mail = event_data.get("mail", {})
+    message_id = mail.get("messageId")
+
+    if not message_id or not event_type:
+        logger.warning(f"[Webhook] 忽略无效事件: eventType={event_type}, messageId={message_id}")
+        return
+
+    # 查找对应的邮件明细
+    detail = db.query(SendingJobDetail).filter(SendingJobDetail.message_id == message_id).first()
+    if not detail:
+        logger.debug(f"[Webhook] 未找到 message_id={message_id} 的记录，跳过")
+        return
+
+    from datetime import datetime
+
+    event_type_upper = event_type.upper()
+
+    if event_type_upper == "DELIVERY":
+        delivery_info = event_data.get("delivery", {})
+        detail.delivery_status = "Delivery"
+        ts = delivery_info.get("timestamp")
+        if ts:
+            try:
+                detail.delivery_time = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            except Exception:
+                detail.delivery_time = datetime.utcnow()
+        else:
+            detail.delivery_time = datetime.utcnow()
+        logger.info(f"[Webhook] Delivery: {detail.recipient} (msg={message_id[:16]}...)")
+
+    elif event_type_upper == "BOUNCE":
+        bounce_info = event_data.get("bounce", {})
+        detail.delivery_status = "Bounce"
+        detail.bounce_type = bounce_info.get("bounceType")
+        detail.bounce_subtype = bounce_info.get("bounceSubType")
+        recipients = bounce_info.get("bouncedRecipients", [])
+        if recipients:
+            detail.bounce_message = recipients[0].get("diagnosticCode", "")
+        ts = bounce_info.get("timestamp")
+        if ts:
+            try:
+                detail.delivery_time = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            except Exception:
+                detail.delivery_time = datetime.utcnow()
+        logger.info(f"[Webhook] Bounce: {detail.recipient} type={detail.bounce_type}/{detail.bounce_subtype}")
+
+    elif event_type_upper == "COMPLAINT":
+        complaint_info = event_data.get("complaint", {})
+        ts = complaint_info.get("timestamp")
+        try:
+            detail.complaint_time = datetime.fromisoformat(ts.replace("Z", "+00:00")) if ts else datetime.utcnow()
+        except Exception:
+            detail.complaint_time = datetime.utcnow()
+        logger.info(f"[Webhook] Complaint: {detail.recipient}")
+
+    elif event_type_upper == "OPEN":
+        detail.open_count = (detail.open_count or 0) + 1
+        if not detail.first_open_time:
+            open_info = event_data.get("open", {})
+            ts = open_info.get("timestamp")
+            try:
+                detail.first_open_time = datetime.fromisoformat(ts.replace("Z", "+00:00")) if ts else datetime.utcnow()
+            except Exception:
+                detail.first_open_time = datetime.utcnow()
+        logger.info(f"[Webhook] Open: {detail.recipient} (count={detail.open_count})")
+
+    elif event_type_upper == "CLICK":
+        detail.click_count = (detail.click_count or 0) + 1
+        if not detail.first_click_time:
+            click_info = event_data.get("click", {})
+            ts = click_info.get("timestamp")
+            try:
+                detail.first_click_time = datetime.fromisoformat(ts.replace("Z", "+00:00")) if ts else datetime.utcnow()
+            except Exception:
+                detail.first_click_time = datetime.utcnow()
+        logger.info(f"[Webhook] Click: {detail.recipient} (count={detail.click_count})")
+
+    elif event_type_upper == "REJECT":
+        detail.delivery_status = "Reject"
+        logger.info(f"[Webhook] Reject: {detail.recipient}")
+
+    elif event_type_upper == "SEND":
+        if not detail.delivery_status:
+            detail.delivery_status = "Sent"
+        logger.debug(f"[Webhook] Send confirmed: {detail.recipient}")
+
+    db.commit()
+
+
+# ========================
+# 查询批次邮件明细
+# ========================
+
+def get_batch_details(db: Session, batch_id: str) -> list:
+    """获取指定批次的每封邮件明细"""
+    details = db.query(SendingJobDetail).filter(
+        SendingJobDetail.batch_id == batch_id
+    ).order_by(SendingJobDetail.id.asc()).all()
+
+    return [SendingJobDetailOut.model_validate(d) for d in details]
+
+
+def list_email_details(
+    db: Session,
+    user_id: int,
+    is_admin: bool,
+    page: int = 1,
+    page_size: int = 20,
+    recipient: str = "",
+    batch_id: str = "",
+    send_status: str = "",
+    delivery_status: str = "",
+) -> dict:
+    """全局邮件明细查询（支持搜索、筛选、分页）"""
+    query = db.query(SendingJobDetail)
+
+    # 非管理员只能看自己的
+    if not is_admin:
+        user_batch_ids = [
+            r[0] for r in db.query(SendingJob.batch_id).filter(SendingJob.user_id == user_id).all()
+        ]
+        query = query.filter(SendingJobDetail.batch_id.in_(user_batch_ids))
+
+    # 搜索条件
+    if recipient:
+        query = query.filter(SendingJobDetail.recipient.contains(recipient))
+    if batch_id:
+        query = query.filter(SendingJobDetail.batch_id.contains(batch_id))
+    if send_status:
+        query = query.filter(SendingJobDetail.send_status == send_status)
+    if delivery_status:
+        query = query.filter(SendingJobDetail.delivery_status == delivery_status)
+
+    total = query.count()
+    total_pages = math.ceil(total / page_size) if total else 1
+    items = query.order_by(SendingJobDetail.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+
+    # 补充 batch 的模版名和客群名
+    batch_ids_in_page = list(set(d.batch_id for d in items))
+    batch_info = {}
+    if batch_ids_in_page:
+        jobs = db.query(SendingJob).filter(SendingJob.batch_id.in_(batch_ids_in_page)).all()
+        for j in jobs:
+            batch_info[j.batch_id] = {"template_name": j.template_name, "group_name": j.group_name, "source_email": j.source_email}
+
+    result_items = []
+    for d in items:
+        item = SendingJobDetailOut.model_validate(d).model_dump()
+        info = batch_info.get(d.batch_id, {})
+        item["template_name"] = info.get("template_name", "")
+        item["group_name"] = info.get("group_name", "")
+        item["source_email"] = info.get("source_email", "")
+        result_items.append(item)
+
+    return {
+        "items": result_items,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+    }

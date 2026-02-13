@@ -17,3 +17,7 @@ AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 # SES Configuration Set (用于 VDM 追踪送达率/打开率)
 # 需要在 AWS SES 控制台创建 Configuration Set 并启用 VDM
 SES_CONFIGURATION_SET = os.getenv("SES_CONFIGURATION_SET", "")
+
+# SQS Queue URL（用于接收 SES 事件通知，替代 Webhook）
+# 架构：SES → SNS → SQS → 后端轮询
+SQS_QUEUE_URL = os.getenv("SQS_QUEUE_URL", "")

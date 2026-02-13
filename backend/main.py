@@ -10,8 +10,11 @@ SES Sender API - 应用入口
 """
 
 import sys
+import os
 import logging
-from fastapi import FastAPI
+import uuid
+from fastapi import FastAPI, UploadFile, File, Depends
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from alembic.config import Config as AlembicConfig
 from alembic import command as alembic_command
@@ -63,7 +66,7 @@ try:
 except Exception as e:
     print(f"[Alembic] 迁移检查失败: {e}")
     print("[Alembic] 请手动执行: alembic upgrade head")
-    sys.exit(1)
+    # 迁移失败不阻止服务启动，允许手动修复后继续运行
 
 # --- 初始化默认管理员 ---
 db = SessionLocal()
@@ -98,12 +101,133 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- 图片上传目录 & 静态文件服务 ---
+UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads", "images")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "uploads")), name="uploads")
+
+# --- 图片上传 API ---
+ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp", "image/svg+xml"}
+MAX_IMAGE_SIZE = 5 * 1024 * 1024  # 5MB
+
+from core.deps import get_current_user
+
+@app.post("/upload/image")
+async def upload_image(file: UploadFile = File(...), current_user=Depends(get_current_user)):
+    """上传图片，返回可访问的 URL"""
+    if file.content_type not in ALLOWED_IMAGE_TYPES:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail=f"不支持的图片格式: {file.content_type}，支持 JPEG/PNG/GIF/WebP/SVG")
+
+    contents = await file.read()
+    if len(contents) > MAX_IMAGE_SIZE:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail=f"图片大小不能超过 5MB，当前 {len(contents)/1024/1024:.1f}MB")
+
+    # 生成唯一文件名
+    ext = os.path.splitext(file.filename or "image.png")[1] or ".png"
+    filename = f"{uuid.uuid4().hex[:16]}{ext}"
+    filepath = os.path.join(UPLOAD_DIR, filename)
+
+    with open(filepath, "wb") as fp:
+        fp.write(contents)
+
+    # 返回相对 URL（前端拼接后端地址）
+    url = f"/uploads/images/{filename}"
+    return {"url": url, "filename": filename, "size": len(contents)}
+
 # --- 注册各业务域路由 ---
 app.include_router(auth_router)
 app.include_router(identity_router)
 app.include_router(template_router)
 app.include_router(audience_router)
 app.include_router(sending_router)
+
+
+# --- SQS 后台轮询线程（替代 Webhook，主动拉取 SES 事件） ---
+import threading
+import json as _json
+import time as _time
+import boto3
+
+from core.config import SQS_QUEUE_URL, AWS_REGION
+
+_sqs_logger = logging.getLogger("ses-sender.sqs-worker")
+
+
+def _sqs_polling_worker():
+    """后台线程：持续轮询 SQS 队列，处理 SES 事件通知"""
+    _sqs_logger.info(f"[SQS Worker] 启动，队列: {SQS_QUEUE_URL}")
+
+    sqs_client = boto3.client("sqs", region_name=AWS_REGION)
+
+    while True:
+        try:
+            resp = sqs_client.receive_message(
+                QueueUrl=SQS_QUEUE_URL,
+                MaxNumberOfMessages=10,       # 每次最多拉 10 条
+                WaitTimeSeconds=20,            # 长轮询，最多等 20 秒
+                MessageAttributeNames=["All"],
+            )
+
+            messages = resp.get("Messages", [])
+            if not messages:
+                continue
+
+            _sqs_logger.info(f"[SQS Worker] 收到 {len(messages)} 条消息")
+
+            for msg in messages:
+                try:
+                    body = _json.loads(msg["Body"])
+
+                    # SNS 包装的消息：body 里有 "Type" 和 "Message"
+                    if body.get("Type") == "Notification":
+                        message_content = body.get("Message", "{}")
+                        # SNS 确认/测试消息不是 JSON，直接跳过
+                        try:
+                            event_data = _json.loads(message_content)
+                        except (_json.JSONDecodeError, TypeError):
+                            _sqs_logger.debug(f"[SQS Worker] 跳过非 SES 事件消息: {str(message_content)[:100]}")
+                            # 删除该消息，避免重复处理
+                            sqs_client.delete_message(QueueUrl=SQS_QUEUE_URL, ReceiptHandle=msg["ReceiptHandle"])
+                            continue
+                    elif body.get("Type") == "SubscriptionConfirmation":
+                        _sqs_logger.info("[SQS Worker] 跳过 SNS 订阅确认消息")
+                        sqs_client.delete_message(QueueUrl=SQS_QUEUE_URL, ReceiptHandle=msg["ReceiptHandle"])
+                        continue
+                    else:
+                        # 也可能是直接的 SES 事件（如果 SQS 是 SES 的直接目标）
+                        event_data = body
+
+                    # 用独立的 DB session 处理
+                    from core.database import SessionLocal
+                    from domain.sending.service import process_ses_event
+                    bg_db = SessionLocal()
+                    try:
+                        process_ses_event(event_data, bg_db)
+                    finally:
+                        bg_db.close()
+
+                    # 处理成功，删除消息
+                    sqs_client.delete_message(
+                        QueueUrl=SQS_QUEUE_URL,
+                        ReceiptHandle=msg["ReceiptHandle"],
+                    )
+                except Exception as e:
+                    _sqs_logger.error(f"[SQS Worker] 处理消息失败: {e}, body={msg.get('Body', '')[:200]}")
+
+        except Exception as e:
+            _sqs_logger.error(f"[SQS Worker] 轮询异常: {e}")
+            _time.sleep(5)  # 出错后等 5 秒再重试
+
+
+# 仅在配置了 SQS_QUEUE_URL 时启动轮询线程
+if SQS_QUEUE_URL:
+    _sqs_thread = threading.Thread(target=_sqs_polling_worker, daemon=True)
+    _sqs_thread.start()
+    _sqs_logger.info("[SQS Worker] 后台轮询线程已启动")
+else:
+    _sqs_logger.info("[SQS Worker] 未配置 SQS_QUEUE_URL，SQS 轮询未启动（将使用 Webhook 模式或不启用事件追踪）")
 
 
 @app.get("/")
