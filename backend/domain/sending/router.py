@@ -14,6 +14,14 @@ router = APIRouter(tags=["邮件发送"])
 logger = logging.getLogger("ses-sender.webhook")
 
 
+# ========== SES 配额信息 ==========
+@router.get("/ses-quota")
+def get_ses_quota(current_user: User = Depends(get_current_user)):
+    """获取当前 SES 账户的发送配额（实时）"""
+    from core.ses import get_send_quota
+    return get_send_quota()
+
+
 # ========== 管理员：测试邮件 ==========
 @router.post("/admin/test-email")
 def send_test_email(req: TestEmailRequest, admin: User = Depends(require_admin)):

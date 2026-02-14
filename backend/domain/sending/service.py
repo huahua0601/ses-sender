@@ -4,7 +4,7 @@ from typing import List
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
 
-from core.ses import ses_client
+from core.ses import ses_client, SES_MAX_SEND_RATE
 from core.config import SES_CONFIGURATION_SET
 from domain.audience.models import ContactGroup, Contact
 from domain.template.models import EmailTemplate
@@ -108,6 +108,7 @@ def send_bulk_email(
 
     # ===== 后台线程：异步执行发送 =====
     def _do_send():
+        import time as _time
         from core.database import SessionLocal
         bg_db = SessionLocal()
         try:
@@ -118,7 +119,14 @@ def send_bulk_email(
 
             bg_job.status = "sending"
             bg_db.commit()
-            logger.info(f"[Async Send] 开始发送 batch={batch_id}, 联系人={len(contact_list)}")
+
+            # 计算每批发送后需要等待的时间
+            # SES MaxSendRate 是每秒最大邮件数，每批最多 50 封
+            # 按 MaxSendRate 分批：每批发 min(MaxSendRate, 50) 封，间隔 1 秒
+            max_rate = SES_MAX_SEND_RATE or 1
+            batch_size = min(int(max_rate), 50) or 1  # 每批发送数量
+            logger.info(f"[Async Send] 开始发送 batch={batch_id}, 联系人={len(contact_list)}, "
+                        f"MaxSendRate={max_rate}/s, 每批={batch_size}封")
 
             # 构建发送参数
             send_params = {
@@ -153,9 +161,9 @@ def send_bulk_email(
             error_msg = None
             has_failure = False
 
-            for i in range(0, len(destinations), 50):
-                batch = destinations[i: i + 50]
-                batch_contacts = contact_list[i: i + 50]
+            for i in range(0, len(destinations), batch_size):
+                batch = destinations[i: i + batch_size]
+                batch_contacts = contact_list[i: i + batch_size]
                 try:
                     response = ses_client.send_bulk_templated_email(
                         Destinations=batch,
@@ -190,6 +198,10 @@ def send_bulk_email(
                     bg_job.total_batches = total_batches
                     bg_db.commit()
                     logger.info(f"[Async Send] batch={batch_id} 进度: {total_sent}/{len(contact_list)}")
+
+                    # 速率控制：每批发完等 1 秒
+                    if i + batch_size < len(destinations):  # 还有下一批
+                        _time.sleep(1)
 
                 except Exception as e:
                     error_msg = str(e)
