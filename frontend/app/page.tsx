@@ -1000,6 +1000,7 @@ function EmailDetails() {
   const sendBadge=(s:string)=>{
     if(s==="Success")return <Badge color="green">已接受</Badge>;
     if(s==="Pending")return <Badge color="gray">等待中</Badge>;
+    if(s==="Unsubscribed")return <Badge color="orange">已退订</Badge>;
     if(s==="Failed"||s==="MessageRejected")return <Badge color="red">{s}</Badge>;
     return <Badge color="orange">{s||"—"}</Badge>;
   };
@@ -1033,6 +1034,7 @@ function EmailDetails() {
             <option value="Pending">等待中</option>
             <option value="Failed">失败</option>
             <option value="MessageRejected">被拒绝</option>
+            <option value="Unsubscribed">已退订</option>
           </Select>
         </div>
         <div>

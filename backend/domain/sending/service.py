@@ -4,8 +4,8 @@ from typing import List
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
 
-from core.ses import ses_client, SES_MAX_SEND_RATE
-from core.config import SES_CONFIGURATION_SET
+from core.ses import ses_client, sesv2_client, SES_MAX_SEND_RATE
+from core.config import SES_CONFIGURATION_SET, UNSUBSCRIBE_BASE_URL
 from domain.audience.models import ContactGroup, Contact
 from domain.template.models import EmailTemplate
 from domain.template.service import get_ses_template_name
@@ -47,11 +47,10 @@ def send_bulk_email(
     if not source_email:
         raise HTTPException(status_code=400, detail="您尚未配置发送邮箱，请联系管理员")
 
-    # 获取 SES 模版名称
-    ses_template_name = get_ses_template_name(db, template_id, user_id)
-
-    # 获取模版信息（用于记录）
+    # 获取模版信息
     tpl = db.query(EmailTemplate).filter(EmailTemplate.id == template_id, EmailTemplate.user_id == user_id).first()
+    if not tpl:
+        raise HTTPException(status_code=404, detail="模版不存在")
 
     # 校验客群归属
     group = db.query(ContactGroup).filter(
@@ -72,6 +71,21 @@ def send_bulk_email(
     tpl_name = tpl.name if tpl else "unknown"
     group_name = group.name
 
+    # 过滤已退订的邮箱
+    from domain.sending.models import UnsubscribeRecord
+    unsub_emails = set(
+        r[0] for r in db.query(UnsubscribeRecord.email).filter(
+            UnsubscribeRecord.source_email == source_email
+        ).all()
+    )
+    active_contacts = [c for c in contact_list if c["email"] not in unsub_emails]
+    skipped_contacts = [c for c in contact_list if c["email"] in unsub_emails]
+
+    # 获取模板的 HTML 和 Subject 用于 sesv2 发送
+    tpl_subject = tpl.subject if tpl else "No Subject"
+    tpl_html = tpl.html_body if tpl else ""
+    tpl_text = tpl.text_body if tpl else ""
+
     # 创建发送任务（状态：排队中）
     job = SendingJob(
         user_id=user_id,
@@ -87,13 +101,20 @@ def send_bulk_email(
     )
     db.add(job)
 
-    # 预先创建每封邮件的明细记录（状态：等待中）
-    for c in contact_list:
+    # 预先创建每封邮件的明细记录
+    for c in active_contacts:
         db.add(SendingJobDetail(
-            job_id=0,  # 临时，flush 后更新
+            job_id=0,
             batch_id=batch_id,
             recipient=c["email"],
             send_status="Pending",
+        ))
+    for c in skipped_contacts:
+        db.add(SendingJobDetail(
+            job_id=0,
+            batch_id=batch_id,
+            recipient=c["email"],
+            send_status="Unsubscribed",
         ))
     db.flush()
 
@@ -110,6 +131,7 @@ def send_bulk_email(
     def _do_send():
         import time as _time
         from core.database import SessionLocal
+        from core.unsubscribe import generate_unsubscribe_token
         bg_db = SessionLocal()
         try:
             bg_job = bg_db.query(SendingJob).filter(SendingJob.id == job_id).first()
@@ -120,113 +142,107 @@ def send_bulk_email(
             bg_job.status = "sending"
             bg_db.commit()
 
-            # 计算每批发送后需要等待的时间
-            # SES MaxSendRate 是每秒最大邮件数，每批最多 50 封
-            # 按 MaxSendRate 分批：每批发 min(MaxSendRate, 50) 封，间隔 1 秒
             max_rate = SES_MAX_SEND_RATE or 1
-            batch_size = min(int(max_rate), 50) or 1  # 每批发送数量
-            logger.info(f"[Async Send] 开始发送 batch={batch_id}, 联系人={len(contact_list)}, "
-                        f"MaxSendRate={max_rate}/s, 每批={batch_size}封")
-
-            # 构建发送参数
-            send_params = {
-                "Source": source_email,
-                "Template": ses_template_name,
-                "DefaultTemplateData": '{"name": "Customer"}',
-            }
+            send_per_second = min(int(max_rate), 50) or 1
+            logger.info(f"[Async Send] 开始发送 batch={batch_id}, "
+                        f"联系人={len(active_contacts)}(跳过退订{len(skipped_contacts)}), "
+                        f"MaxSendRate={max_rate}/s")
 
             def _ascii_tag(val: str) -> str:
                 return "".join(c if ord(c) < 128 and c not in ' "\'\\' else "_" for c in val)[:256] or "unknown"
 
-            if SES_CONFIGURATION_SET:
-                send_params["ConfigurationSetName"] = SES_CONFIGURATION_SET
-                send_params["DefaultTags"] = [
-                    {"Name": "batch_id", "Value": batch_id},
-                    {"Name": "user_id", "Value": str(user_id)},
-                    {"Name": "group_name", "Value": _ascii_tag(group_name)},
-                    {"Name": "template_name", "Value": _ascii_tag(tpl_name)},
-                ]
-
-            # 构建发送列表
-            destinations = [
-                {
-                    "Destination": {"ToAddresses": [c["email"]]},
-                    "ReplacementTemplateData": f'{{"name": "{c["name"]}"}}',
-                }
-                for c in contact_list
-            ]
-
-            total_batches = 0
             total_sent = 0
             error_msg = None
             has_failure = False
 
-            for i in range(0, len(destinations), batch_size):
-                batch = destinations[i: i + batch_size]
-                batch_contacts = contact_list[i: i + batch_size]
-                try:
-                    response = ses_client.send_bulk_templated_email(
-                        Destinations=batch,
-                        **send_params,
-                    )
-                    total_batches += 1
+            # 逐封发送（sesv2.send_email），每秒发 send_per_second 封
+            for i in range(0, len(active_contacts), send_per_second):
+                chunk = active_contacts[i: i + send_per_second]
 
-                    # 更新每封邮件的状态
-                    ses_statuses = response.get("Status", [])
-                    for idx, ses_status in enumerate(ses_statuses):
-                        recipient = batch_contacts[idx]["email"] if idx < len(batch_contacts) else "unknown"
-                        msg_id = ses_status.get("MessageId")
-                        s_status = ses_status.get("Status", "Unknown")
-                        s_error = ses_status.get("Error")
+                for contact in chunk:
+                    recipient = contact["email"]
+                    name = contact["name"]
+                    try:
+                        # 生成退订 token 和 URL
+                        unsub_token = generate_unsubscribe_token(recipient, source_email)
+                        unsub_url = f"{UNSUBSCRIBE_BASE_URL}/unsubscribe?token={unsub_token}"
 
+                        # 替换模板变量
+                        html_body = tpl_html.replace("{{name}}", name) if tpl_html else ""
+                        text_body = tpl_text.replace("{{name}}", name) if tpl_text else ""
+                        subject = tpl_subject.replace("{{name}}", name) if tpl_subject else ""
+
+                        # 构建 sesv2 send_email 参数
+                        email_content = {
+                            "Simple": {
+                                "Subject": {"Data": subject, "Charset": "UTF-8"},
+                                "Body": {},
+                                "Headers": [
+                                    {"Name": "List-Unsubscribe", "Value": f"<{unsub_url}>"},
+                                    {"Name": "List-Unsubscribe-Post", "Value": "List-Unsubscribe=One-Click"},
+                                ],
+                            }
+                        }
+                        if html_body:
+                            email_content["Simple"]["Body"]["Html"] = {"Data": html_body, "Charset": "UTF-8"}
+                        if text_body:
+                            email_content["Simple"]["Body"]["Text"] = {"Data": text_body, "Charset": "UTF-8"}
+
+                        send_kwargs = {
+                            "FromEmailAddress": source_email,
+                            "Destination": {"ToAddresses": [recipient]},
+                            "Content": email_content,
+                        }
+                        if SES_CONFIGURATION_SET:
+                            send_kwargs["ConfigurationSetName"] = SES_CONFIGURATION_SET
+                            send_kwargs["EmailTags"] = [
+                                {"Name": "batch_id", "Value": batch_id},
+                                {"Name": "user_id", "Value": str(user_id)},
+                                {"Name": "group_name", "Value": _ascii_tag(group_name)},
+                                {"Name": "template_name", "Value": _ascii_tag(tpl_name)},
+                            ]
+
+                        response = sesv2_client.send_email(**send_kwargs)
+                        msg_id = response.get("MessageId", "")
+
+                        # 更新明细
                         detail = bg_db.query(SendingJobDetail).filter(
                             SendingJobDetail.batch_id == batch_id,
                             SendingJobDetail.recipient == recipient,
                         ).first()
                         if detail:
-                            detail.send_status = s_status
+                            detail.send_status = "Success"
                             detail.message_id = msg_id
-                            detail.send_error = s_error
 
-                        if s_status != "Success":
-                            has_failure = True
-
-                    total_sent += len(batch)
-
-                    # 实时更新进度
-                    bg_job.sent_count = total_sent
-                    bg_job.total_batches = total_batches
-                    bg_db.commit()
-                    logger.info(f"[Async Send] batch={batch_id} 进度: {total_sent}/{len(contact_list)}")
-
-                    # 速率控制：每批发完等 1 秒
-                    if i + batch_size < len(destinations):  # 还有下一批
-                        _time.sleep(1)
-
-                except Exception as e:
-                    error_msg = str(e)
-                    has_failure = True
-                    logger.error(f"[Async Send] batch={batch_id} 第{total_batches+1}批发送失败: {e}")
-
-                    # 标记未发送的邮件为失败
-                    for c in batch_contacts:
+                    except Exception as e:
+                        has_failure = True
+                        err_str = str(e)
+                        logger.error(f"[Async Send] 发送失败 {recipient}: {err_str[:200]}")
                         detail = bg_db.query(SendingJobDetail).filter(
                             SendingJobDetail.batch_id == batch_id,
-                            SendingJobDetail.recipient == c["email"],
-                            SendingJobDetail.send_status == "Pending",
+                            SendingJobDetail.recipient == recipient,
                         ).first()
                         if detail:
                             detail.send_status = "Failed"
-                            detail.send_error = error_msg
-                    bg_db.commit()
-                    break  # 出错后停止
+                            detail.send_error = err_str[:500]
+                        if "Throttling" in err_str or "Rate exceeded" in err_str:
+                            error_msg = err_str
+                            _time.sleep(2)
+
+                total_sent += len(chunk)
+                bg_job.sent_count = total_sent
+                bg_db.commit()
+                logger.info(f"[Async Send] batch={batch_id} 进度: {total_sent}/{len(active_contacts)}")
+
+                # 速率控制：每轮发完等 1 秒
+                if i + send_per_second < len(active_contacts):
+                    _time.sleep(1)
 
             # 更新最终状态
             from datetime import datetime as dt
-            bg_job.total_batches = total_batches
             bg_job.sent_count = total_sent
             bg_job.finished_at = dt.utcnow()
-            if error_msg and total_batches == 0:
+            if total_sent == 0 and has_failure:
                 bg_job.status = "failed"
                 bg_job.error_message = error_msg
             elif has_failure:
@@ -235,7 +251,8 @@ def send_bulk_email(
             else:
                 bg_job.status = "success"
             bg_db.commit()
-            logger.info(f"[Async Send] 完成 batch={batch_id}, status={bg_job.status}, sent={total_sent}/{len(contact_list)}")
+            logger.info(f"[Async Send] 完成 batch={batch_id}, status={bg_job.status}, "
+                        f"sent={total_sent}/{len(active_contacts)}")
 
         except Exception as e:
             logger.error(f"[Async Send] 未知异常 batch={batch_id}: {e}")
@@ -261,6 +278,8 @@ def send_bulk_email(
         "batch_id": batch_id,
         "source": source_email,
         "total_contacts": len(contact_list),
+        "active_contacts": len(active_contacts),
+        "skipped_unsubscribed": len(skipped_contacts),
         "message": "发送任务已创建，正在后台执行",
     }
 

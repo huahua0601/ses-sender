@@ -3,7 +3,7 @@ from typing import List
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
 
-from core.ses import ses_client
+from core.ses import sesv2_client
 from domain.template.models import EmailTemplate
 from domain.template.schemas import TemplateCreate, TemplateUpdate, TemplateOut
 
@@ -21,7 +21,7 @@ def list_templates(db: Session, user_id: int) -> List[TemplateOut]:
 
 
 def create_template(db: Session, data: TemplateCreate, user_id: int) -> dict:
-    """创建模版（同时写入 DB 和 SES）"""
+    """创建模版（同时写入 DB 和 SES v2）"""
     if not data.name or not data.name.strip():
         raise HTTPException(status_code=400, detail="模版名称不能为空")
 
@@ -29,18 +29,18 @@ def create_template(db: Session, data: TemplateCreate, user_id: int) -> dict:
     html = str(data.html_body or "")
     text = html or " "
 
-    # 创建 SES 模版
     try:
-        ses_client.create_template(Template={
-            "TemplateName": ses_name,
-            "SubjectPart": str(data.subject),
-            "HtmlPart": html,
-            "TextPart": text,
-        })
+        sesv2_client.create_email_template(
+            TemplateName=ses_name,
+            TemplateContent={
+                "Subject": str(data.subject),
+                "Html": html,
+                "Text": text,
+            },
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"SES 模版创建失败: {str(e)}")
 
-    # 写入数据库
     tpl = EmailTemplate(
         name=data.name,
         ses_name=ses_name,
@@ -55,7 +55,7 @@ def create_template(db: Session, data: TemplateCreate, user_id: int) -> dict:
 
 
 def update_template(db: Session, template_id: int, data: TemplateUpdate, user_id: int) -> dict:
-    """更新模版（同时更新 DB 和 SES）"""
+    """更新模版（同时更新 DB 和 SES v2）"""
     tpl = db.query(EmailTemplate).filter(EmailTemplate.id == template_id, EmailTemplate.user_id == user_id).first()
     if not tpl:
         raise HTTPException(status_code=404, detail="模版不存在")
@@ -66,14 +66,15 @@ def update_template(db: Session, template_id: int, data: TemplateUpdate, user_id
         tpl.html_body = data.html_body
         tpl.text_body = data.html_body or " "
 
-    # 更新 SES 模版
     try:
-        ses_client.update_template(Template={
-            "TemplateName": tpl.ses_name,
-            "SubjectPart": tpl.subject,
-            "HtmlPart": tpl.html_body,
-            "TextPart": tpl.text_body,
-        })
+        sesv2_client.update_email_template(
+            TemplateName=tpl.ses_name,
+            TemplateContent={
+                "Subject": tpl.subject,
+                "Html": tpl.html_body,
+                "Text": tpl.text_body,
+            },
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"SES 模版更新失败: {str(e)}")
 
@@ -82,16 +83,15 @@ def update_template(db: Session, template_id: int, data: TemplateUpdate, user_id
 
 
 def delete_template(db: Session, template_id: int, user_id: int) -> dict:
-    """删除模版（同时从 DB 和 SES 删除）"""
+    """删除模版（同时从 DB 和 SES v2 删除）"""
     tpl = db.query(EmailTemplate).filter(EmailTemplate.id == template_id, EmailTemplate.user_id == user_id).first()
     if not tpl:
         raise HTTPException(status_code=404, detail="模版不存在")
 
-    # 删除 SES 模版
     try:
-        ses_client.delete_template(TemplateName=tpl.ses_name)
+        sesv2_client.delete_email_template(TemplateName=tpl.ses_name)
     except Exception:
-        pass  # SES 模版可能已不存在，忽略错误
+        pass
 
     db.delete(tpl)
     db.commit()
