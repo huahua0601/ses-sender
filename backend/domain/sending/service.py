@@ -143,8 +143,6 @@ def send_bulk_email(
                 send_params["DefaultTags"] = [
                     {"Name": "batch_id", "Value": batch_id},
                     {"Name": "user_id", "Value": str(user_id)},
-                    {"Name": "group_name", "Value": _ascii_tag(group_name)},
-                    {"Name": "template_name", "Value": _ascii_tag(tpl_name)},
                 ]
 
             # 构建发送列表
