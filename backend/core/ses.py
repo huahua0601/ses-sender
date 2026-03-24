@@ -5,6 +5,7 @@ import logging
 _logger = logging.getLogger("ses-sender.ses")
 
 ses_client = boto3.client("ses", region_name=AWS_REGION)
+sesv2_client = boto3.client("sesv2", region_name=AWS_REGION)
 
 # 获取 SES 账户发送配额
 def get_send_quota() -> dict:
@@ -12,9 +13,9 @@ def get_send_quota() -> dict:
     try:
         quota = ses_client.get_send_quota()
         info = {
-            "max_send_rate": quota.get("MaxSendRate", 1),        # 每秒最大发送数
-            "max_24_hour_send": quota.get("Max24HourSend", 200),  # 24小时最大发送量
-            "sent_last_24_hours": quota.get("SentLast24Hours", 0), # 过去24小时已发送量
+            "max_send_rate": quota.get("MaxSendRate", 1),
+            "max_24_hour_send": quota.get("Max24HourSend", 200),
+            "sent_last_24_hours": quota.get("SentLast24Hours", 0),
         }
         _logger.info(f"[SES Quota] MaxSendRate={info['max_send_rate']}/s, "
                       f"24h Limit={info['max_24_hour_send']}, "
@@ -26,4 +27,4 @@ def get_send_quota() -> dict:
 
 # 启动时获取一次
 _quota = get_send_quota()
-SES_MAX_SEND_RATE = _quota["max_send_rate"]  # 每秒最大发送数
+SES_MAX_SEND_RATE = _quota["max_send_rate"]

@@ -21,3 +21,6 @@ SES_CONFIGURATION_SET = os.getenv("SES_CONFIGURATION_SET", "")
 # SQS Queue URL（用于接收 SES 事件通知，替代 Webhook）
 # 架构：SES → SNS → SQS → 后端轮询
 SQS_QUEUE_URL = os.getenv("SQS_QUEUE_URL", "")
+
+# 退订链接的基础 URL（公网可访问的后端地址）
+UNSUBSCRIBE_BASE_URL = os.getenv("UNSUBSCRIBE_BASE_URL", "")

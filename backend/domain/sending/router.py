@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, HTMLResponse
 from sqlalchemy.orm import Session
 import json
 import logging
@@ -12,6 +12,79 @@ from domain.sending import service
 
 router = APIRouter(tags=["邮件发送"])
 logger = logging.getLogger("ses-sender.webhook")
+
+
+# ========== 退订端点（无需鉴权） ==========
+@router.post("/unsubscribe", response_class=PlainTextResponse)
+async def unsubscribe_post(request: Request, db: Session = Depends(get_db)):
+    """RFC 8058 one-click unsubscribe POST handler (called by email clients)"""
+    from core.unsubscribe import verify_unsubscribe_token
+    from domain.sending.models import UnsubscribeRecord
+
+    # token 可能在 query params 或 form body 中
+    token = request.query_params.get("token", "")
+    if not token:
+        try:
+            form = await request.form()
+            token = form.get("token", "") or form.get("List-Unsubscribe", "")
+        except Exception:
+            pass
+    if not token:
+        return PlainTextResponse("missing token", status_code=400)
+
+    result = verify_unsubscribe_token(token)
+    if not result:
+        return PlainTextResponse("invalid token", status_code=400)
+
+    email, source_email = result
+
+    existing = db.query(UnsubscribeRecord).filter(
+        UnsubscribeRecord.email == email,
+        UnsubscribeRecord.source_email == source_email,
+    ).first()
+    if not existing:
+        db.add(UnsubscribeRecord(email=email, source_email=source_email, reason="one-click"))
+        db.commit()
+        logger.info(f"[Unsubscribe] {email} unsubscribed from {source_email}")
+
+    return PlainTextResponse("ok", status_code=200)
+
+
+@router.get("/unsubscribe", response_class=HTMLResponse)
+def unsubscribe_page(token: str = Query(""), db: Session = Depends(get_db)):
+    """退订确认页面 (GET) — Gmail 'Go to website' 跳转到此"""
+    from core.unsubscribe import verify_unsubscribe_token
+    from domain.sending.models import UnsubscribeRecord
+
+    if not token:
+        return HTMLResponse("<h2>Invalid link</h2>", status_code=400)
+
+    result = verify_unsubscribe_token(token)
+    if not result:
+        return HTMLResponse("<h2>Invalid or expired link</h2>", status_code=400)
+
+    email, source_email = result
+
+    existing = db.query(UnsubscribeRecord).filter(
+        UnsubscribeRecord.email == email,
+        UnsubscribeRecord.source_email == source_email,
+    ).first()
+    if not existing:
+        db.add(UnsubscribeRecord(email=email, source_email=source_email, reason="one-click"))
+        db.commit()
+
+    html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Unsubscribed</title>
+<style>body{{font-family:-apple-system,BlinkMacSystemFont,sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f8f9fa}}
+.card{{background:#fff;border-radius:12px;padding:48px;max-width:480px;text-align:center;box-shadow:0 2px 12px rgba(0,0,0,.08)}}
+h1{{color:#10b981;font-size:28px;margin-bottom:12px}} p{{color:#6b7280;line-height:1.6}} .email{{color:#111827;font-weight:600}}</style>
+</head><body><div class="card">
+<h1>Successfully Unsubscribed</h1>
+<p>The email address <span class="email">{email}</span> has been unsubscribed from emails sent by <span class="email">{source_email}</span>.</p>
+<p style="margin-top:24px;font-size:14px;color:#9ca3af">You will no longer receive emails from this sender.</p>
+</div></body></html>"""
+    return HTMLResponse(html)
 
 
 # ========== SES 配额信息 ==========

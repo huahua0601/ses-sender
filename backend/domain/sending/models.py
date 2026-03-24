@@ -44,4 +44,16 @@ class SendingJobDetail(Base):
     first_open_time = Column(DateTime, nullable=True)
     click_count = Column(Integer, default=0)                    # 点击次数
     first_click_time = Column(DateTime, nullable=True)
-    complaint_time = Column(DateTime, nullable=True)            # 投诉时间    created_at = Column(DateTime, default=datetime.utcnow)
+    complaint_time = Column(DateTime, nullable=True)            # 投诉时间
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class UnsubscribeRecord(Base):
+    """全局退订记录"""
+    __tablename__ = "unsubscribe_list"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String(255), index=True)                      # 收件人邮箱
+    source_email = Column(String(255), index=True)               # 发送者邮箱
+    reason = Column(String(32), default="one-click")             # one-click / manual / complaint
+    unsubscribed_at = Column(DateTime, default=datetime.utcnow)
