@@ -2,6 +2,16 @@
 
 A bulk email management platform built on AWS SES with a separated frontend/backend architecture. Supports multi-user, role-based access control, contact group management, bulk sending, and deliverability tracking.
 
+## Screenshots
+
+**Admin Panel**
+
+![Admin Panel](img/admin.png)
+
+**User Panel**
+
+![User Panel](img/user.png)
+
 ## Features
 
 ### Admin
