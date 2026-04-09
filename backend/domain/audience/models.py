@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey
+from sqlalchemy import Column, Integer, String, Text, ForeignKey
 from sqlalchemy.orm import relationship
 from core.database import Base
 
@@ -21,6 +21,7 @@ class Contact(Base):
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String(255), index=True)
     name = Column(String(255))
+    attributes = Column(Text, nullable=True)                     # JSON string: {"company":"Acme","city":"Shanghai"}
     group_id = Column(Integer, ForeignKey("contact_groups.id"))
 
     group = relationship("ContactGroup", back_populates="contacts")

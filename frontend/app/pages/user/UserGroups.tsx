@@ -13,7 +13,7 @@ export default function UserGroups() {
   const [ng,setNg]=useState("");
   const [ngDesc,setNgDesc]=useState("");
   const [showAddContact,setShowAddContact]=useState(false);
-  const [rows,setRows]=useState([{name:"",email:""}]);
+  const [rows,setRows]=useState([{name:"",email:"",attrKeys:[""],attrVals:[""]}] as any[]);
 
   const PAGE_SIZE = 10;
   const loadG=async(p=gP,s=gS)=>{try{const d=await(await fetch(`${API}/groups?page=${p}&page_size=${PAGE_SIZE}&search=${encodeURIComponent(s)}`,{headers:authH(token)})).json();setGs(d.items||[]);setGT(d.total||0);setGTP(d.total_pages||1);setGP(d.page||1);}catch{setGs([]);}};
@@ -28,9 +28,13 @@ export default function UserGroups() {
   const delG=async(g:any)=>{if(!await cfm("删除客群",`确定删除客群「${g.name}」及其所有 ${g.contact_count} 个联系人？\n此操作不可恢复。`,"确认删除"))return;await fetch(`${API}/groups/${g.id}`,{method:"DELETE",headers:authH(token)});if(sel===g.id){setSel(null);setCs([]);}loadG(gP,gS);};
 
   const updR=(i:number,f:string,v:string)=>{const r=[...rows];(r[i] as any)[f]=v;setRows(r);};
-  const addR=()=>setRows([...rows,{name:"",email:""}]);
+  const addR=()=>setRows([...rows,{name:"",email:"",attrKeys:[""],attrVals:[""]}]);
   const rmR=(i:number)=>{if(rows.length>1)setRows(rows.filter((_,j)=>j!==i));};
-  const saveC=async()=>{const v=rows.filter(r=>r.email.trim());if(!v.length)return toast("warning","请至少填写一个邮箱");for(const r of v)await fetch(`${API}/contacts`,{method:"POST",headers:authH(token),body:JSON.stringify({name:r.name.trim(),email:r.email.trim(),group_id:sel})});toast("success",`已添加 ${v.length} 个联系人`);setRows([{name:"",email:""}]);setShowAddContact(false);loadC(sel!,cP,cS);loadG(gP,gS);};
+  const updAttr=(ri:number,ai:number,field:"key"|"val",v:string)=>{const r=[...rows];if(field==="key")r[ri].attrKeys[ai]=v;else r[ri].attrVals[ai]=v;setRows(r);};
+  const addAttrRow=(ri:number)=>{const r=[...rows];r[ri].attrKeys.push("");r[ri].attrVals.push("");setRows(r);};
+  const rmAttrRow=(ri:number,ai:number)=>{const r=[...rows];r[ri].attrKeys.splice(ai,1);r[ri].attrVals.splice(ai,1);setRows(r);};
+  const buildAttrs=(r:any)=>{const o:any={};(r.attrKeys||[]).forEach((k:string,i:number)=>{const key=k.trim(),val=(r.attrVals[i]||"").trim();if(key&&val)o[key]=val;});return Object.keys(o).length?JSON.stringify(o):null;};
+  const saveC=async()=>{const v=rows.filter(r=>r.email.trim());if(!v.length)return toast("warning","请至少填写一个邮箱");for(const r of v)await fetch(`${API}/contacts`,{method:"POST",headers:authH(token),body:JSON.stringify({name:r.name.trim(),email:r.email.trim(),attributes:buildAttrs(r),group_id:sel})});toast("success",`已添加 ${v.length} 个联系人`);setRows([{name:"",email:"",attrKeys:[""],attrVals:[""]}]);setShowAddContact(false);loadC(sel!,cP,cS);loadG(gP,gS);};
   const delC=async(c:any)=>{if(!await cfm("删除联系人",`确定删除联系人「${c.name||c.email}」？\n邮箱: ${c.email}`,"确认删除"))return;await fetch(`${API}/contacts/${c.id}`,{method:"DELETE",headers:authH(token)});loadC(sel!,cP,cS);loadG(gP,gS);};
 
   const dlTpl=()=>window.open(`${API}/contacts/template/download?token=${token}`,"_blank");
@@ -54,12 +58,24 @@ export default function UserGroups() {
       </div>
     </Modal>
 
-    <Modal open={showAddContact} onClose={()=>setShowAddContact(false)} title="添加联系人" width={580}>
-      <div className="space-y-3">
-        {rows.map((r,i)=><div key={i} className="flex gap-2 items-center">
-          <Input placeholder="姓名" value={r.name} onChange={(e:any)=>updR(i,"name",e.target.value)}/>
-          <Input placeholder="邮箱 *" value={r.email} onChange={(e:any)=>updR(i,"email",e.target.value)}/>
-          {rows.length>1&&<button onClick={()=>rmR(i)} className="text-gray-400 hover:text-red-500 text-xl leading-none px-1 flex-shrink-0">&times;</button>}
+    <Modal open={showAddContact} onClose={()=>setShowAddContact(false)} title="添加联系人" width={640}>
+      <div className="space-y-3 max-h-[60vh] overflow-y-auto">
+        {rows.map((r,i)=><div key={i} className="border border-gray-100 rounded-lg p-3 space-y-2">
+          <div className="flex gap-2 items-center">
+            <Input placeholder="姓名" value={r.name} onChange={(e:any)=>updR(i,"name",e.target.value)}/>
+            <Input placeholder="邮箱 *" value={r.email} onChange={(e:any)=>updR(i,"email",e.target.value)}/>
+            {rows.length>1&&<button onClick={()=>rmR(i)} className="text-gray-400 hover:text-red-500 text-xl leading-none px-1 flex-shrink-0">&times;</button>}
+          </div>
+          <div className="pl-1">
+            <span className="text-xs text-gray-400 mb-1 block">自定义属性（可在模板中用 {"{{key}}"} 引用）</span>
+            {(r.attrKeys||[""]).map((_:any,ai:number)=><div key={ai} className="flex gap-2 items-center mb-1">
+              <input className="h-8 px-2 border border-gray-200 rounded text-xs text-gray-700 w-28 outline-none focus:border-indigo-400" placeholder="属性名" value={r.attrKeys[ai]||""} onChange={(e:any)=>updAttr(i,ai,"key",e.target.value)}/>
+              <span className="text-gray-300">=</span>
+              <input className="h-8 px-2 border border-gray-200 rounded text-xs text-gray-700 flex-1 outline-none focus:border-indigo-400" placeholder="属性值" value={r.attrVals[ai]||""} onChange={(e:any)=>updAttr(i,ai,"val",e.target.value)}/>
+              {(r.attrKeys||[]).length>1&&<button onClick={()=>rmAttrRow(i,ai)} className="text-gray-300 hover:text-red-400 text-sm">&times;</button>}
+            </div>)}
+            <button onClick={()=>addAttrRow(i)} className="text-xs text-indigo-500 hover:text-indigo-700">+ 添加属性</button>
+          </div>
         </div>)}
         <Btn variant="outline" size="sm" onClick={addR}>+ 添加一行</Btn>
         <div className="flex justify-end gap-2 pt-2 border-t border-gray-100">
@@ -86,17 +102,21 @@ export default function UserGroups() {
         <Btn variant="outline" size="sm" onClick={dlTpl}>下载模版</Btn>
         <label className="inline-flex items-center justify-center font-medium rounded-lg transition h-8 px-3 text-xs border border-gray-200 text-gray-600 hover:bg-gray-50 bg-white cursor-pointer">Excel导入<input type="file" accept=".xlsx,.xls" className="hidden" onChange={ulCs}/></label>
         <Btn variant="outline" size="sm" onClick={dlCs}>导出Excel</Btn>
-        <Btn variant="success" size="sm" onClick={()=>{setRows([{name:"",email:""}]);setShowAddContact(true);}}>+ 添加联系人</Btn>
+        <Btn variant="success" size="sm" onClick={()=>{setRows([{name:"",email:"",attrKeys:[""],attrVals:[""]}]);setShowAddContact(true);}}>+ 添加联系人</Btn>
       </div>}>
         {sel?<>
           <div className="flex items-center gap-3 mb-4"><Input placeholder="搜索姓名或邮箱..." value={cS} onChange={(e:any)=>searchC(e.target.value)}/><span className="text-sm text-gray-400 whitespace-nowrap">共 {cT} 人</span></div>
           <div className="overflow-x-auto"><table className="w-full">
-            <thead><tr className="border-b border-gray-100">{["姓名","邮箱","操作"].map(h=><th key={h} className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider py-3 px-4">{h}</th>)}</tr></thead>
-            <tbody>{cs.map((c:any)=><tr key={c.id} className="border-b border-gray-50 hover:bg-gray-50/50 transition">
+            <thead><tr className="border-b border-gray-100">{["姓名","邮箱","属性","操作"].map(h=><th key={h} className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider py-3 px-4">{h}</th>)}</tr></thead>
+            <tbody>{cs.map((c:any)=>{
+              let attrPreview="";
+              try{const a=c.attributes?JSON.parse(c.attributes):{};attrPreview=Object.entries(a).map(([k,v])=>`${k}: ${v}`).join(", ");}catch{}
+              return <tr key={c.id} className="border-b border-gray-50 hover:bg-gray-50/50 transition">
               <td className="py-3 px-4 text-sm text-gray-800">{c.name}</td>
               <td className="py-3 px-4 text-sm text-gray-500">{c.email}</td>
+              <td className="py-3 px-4 text-xs text-gray-400 max-w-[200px] truncate" title={attrPreview}>{attrPreview||"—"}</td>
               <td className="py-3 px-4"><Btn variant="danger" size="sm" onClick={()=>delC(c)}>删除</Btn></td>
-            </tr>)}</tbody>
+            </tr>})}</tbody>
           </table></div>
           {cs.length===0&&<p className="text-center py-8 text-sm text-gray-400">暂无联系人</p>}
           <Pager page={cP} totalPages={cTP} total={cT} onPageChange={p=>loadC(sel,p,cS)}/>

@@ -1,4 +1,5 @@
 import io
+import json
 import math
 from typing import List
 from sqlalchemy import func
@@ -21,7 +22,6 @@ def list_groups(db: Session, user_id: int, search: str = "", page: int = 1, page
     total_pages = max(1, math.ceil(total / page_size))
     groups = query.order_by(ContactGroup.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
 
-    # 附带每个客群的联系人数量
     items = []
     for g in groups:
         count = db.query(func.count(Contact.id)).filter(Contact.group_id == g.id).scalar()
@@ -71,14 +71,14 @@ def list_contacts(db: Session, group_id: int, user_id: int, search: str = "", pa
     total = query.count()
     total_pages = max(1, math.ceil(total / page_size))
     rows = query.order_by(Contact.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
-    items = [{"id": c.id, "email": c.email, "name": c.name, "group_id": c.group_id} for c in rows]
+    items = [{"id": c.id, "email": c.email, "name": c.name, "attributes": c.attributes, "group_id": c.group_id} for c in rows]
 
     return PaginatedResponse(items=items, total=total, page=page, page_size=page_size, total_pages=total_pages)
 
 
 def create_contact(db: Session, data: ContactCreate, user_id: int) -> Contact:
     _get_user_group(db, data.group_id, user_id)
-    contact = Contact(email=data.email, name=data.name, group_id=data.group_id)
+    contact = Contact(email=data.email, name=data.name, attributes=data.attributes, group_id=data.group_id)
     db.add(contact)
     db.commit()
     db.refresh(contact)
@@ -100,12 +100,31 @@ def download_contacts_excel(db: Session, group_id: int, user_id: int) -> Streami
     group = _get_user_group(db, group_id, user_id)
     contacts = db.query(Contact).filter(Contact.group_id == group_id).all()
 
+    # Collect all attribute keys across contacts
+    all_attr_keys = []
+    for c in contacts:
+        if c.attributes:
+            try:
+                attrs = json.loads(c.attributes)
+                for k in attrs:
+                    if k not in all_attr_keys:
+                        all_attr_keys.append(k)
+            except (json.JSONDecodeError, TypeError):
+                pass
+
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "联系人"
-    ws.append(["姓名", "邮箱"])
+    ws.append(["姓名", "邮箱"] + all_attr_keys)
     for c in contacts:
-        ws.append([c.name or "", c.email])
+        attrs = {}
+        if c.attributes:
+            try:
+                attrs = json.loads(c.attributes)
+            except (json.JSONDecodeError, TypeError):
+                pass
+        row = [c.name or "", c.email] + [str(attrs.get(k, "")) for k in all_attr_keys]
+        ws.append(row)
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -121,9 +140,9 @@ def download_template_excel() -> StreamingResponse:
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "联系人模版"
-    ws.append(["姓名", "邮箱"])
-    ws.append(["张三", "zhangsan@example.com"])
-    ws.append(["李四", "lisi@example.com"])
+    ws.append(["姓名", "邮箱", "company", "city"])
+    ws.append(["张三", "zhangsan@example.com", "Acme Inc", "Shanghai"])
+    ws.append(["李四", "lisi@example.com", "Tech Corp", "Beijing"])
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -141,13 +160,32 @@ def upload_contacts_excel(db: Session, group_id: int, user_id: int, file: Upload
     try:
         wb = openpyxl.load_workbook(file.file)
         ws = wb.active
+
+        # Read header row to get attribute column names
+        headers = [str(cell.value or "").strip() for cell in ws[1]]
+        attr_keys = headers[2:]  # columns after 姓名, 邮箱
+
         count = 0
         for row in ws.iter_rows(min_row=2, values_only=True):
             name = str(row[0] or "").strip() if row[0] else ""
             email = str(row[1] or "").strip() if len(row) > 1 and row[1] else ""
-            if email:
-                db.add(Contact(name=name, email=email, group_id=group_id))
-                count += 1
+            if not email:
+                continue
+
+            # Build attributes JSON from extra columns
+            attrs = {}
+            for i, key in enumerate(attr_keys):
+                if key and len(row) > i + 2 and row[i + 2]:
+                    attrs[key] = str(row[i + 2]).strip()
+
+            contact = Contact(
+                name=name,
+                email=email,
+                attributes=json.dumps(attrs, ensure_ascii=False) if attrs else None,
+                group_id=group_id,
+            )
+            db.add(contact)
+            count += 1
         db.commit()
         return {"message": f"成功导入 {count} 个联系人"}
     except Exception as e:

@@ -27,6 +27,7 @@ class GroupOut(BaseModel):
 class ContactCreate(BaseModel):
     email: str
     name: Optional[str] = None
+    attributes: Optional[str] = None
     group_id: int
 
 
@@ -34,6 +35,7 @@ class ContactOut(BaseModel):
     id: int
     email: str
     name: Optional[str] = None
+    attributes: Optional[str] = None
     group_id: int
 
     class Config:

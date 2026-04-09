@@ -1,5 +1,6 @@
 import uuid
 import math
+import json
 from typing import List
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
@@ -67,7 +68,11 @@ def send_bulk_email(
     batch_id = f"batch-{uuid.uuid4().hex[:12]}"
 
     # 提前提取联系人数据（避免后台线程使用已关闭的 Session）
-    contact_list = [{"email": c.email, "name": c.name or "Customer"} for c in contacts]
+    contact_list = [
+        {"email": c.email, "name": c.name or "Customer",
+         "attributes": json.loads(c.attributes) if c.attributes else {}}
+        for c in contacts
+    ]
     tpl_name = tpl.name if tpl else "unknown"
     group_name = group.name
 
@@ -167,10 +172,18 @@ def send_bulk_email(
                         unsub_token = generate_unsubscribe_token(recipient, source_email)
                         unsub_url = f"{UNSUBSCRIBE_BASE_URL}/unsubscribe?token={unsub_token}"
 
-                        # 替换模板变量
-                        html_body = tpl_html.replace("{{name}}", name) if tpl_html else ""
-                        text_body = tpl_text.replace("{{name}}", name) if tpl_text else ""
-                        subject = tpl_subject.replace("{{name}}", name) if tpl_subject else ""
+                        # 替换模板变量（name, email + 自定义属性）
+                        def _replace_vars(template: str) -> str:
+                            if not template:
+                                return ""
+                            result = template.replace("{{name}}", name).replace("{{email}}", recipient)
+                            for k, v in contact.get("attributes", {}).items():
+                                result = result.replace("{{" + k + "}}", str(v))
+                            return result
+
+                        html_body = _replace_vars(tpl_html)
+                        text_body = _replace_vars(tpl_text)
+                        subject = _replace_vars(tpl_subject)
 
                         # 构建 sesv2 send_email 参数
                         email_content = {

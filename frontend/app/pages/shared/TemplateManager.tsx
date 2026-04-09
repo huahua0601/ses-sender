@@ -148,6 +148,7 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
               {v.val}
             </button>
           ))}
+          <span className="text-xs text-gray-300 ml-1" title="联系人的自定义属性也可作为变量使用，如 {{company}}、{{city}} 等">自定义属性可用 {"{{key}}"}</span>
           <span className="text-xs text-gray-300 ml-auto">支持粘贴/拖拽图片</span>
         </div>
 
