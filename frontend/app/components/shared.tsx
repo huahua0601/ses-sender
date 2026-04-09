@@ -1,7 +1,7 @@
 "use client";
 import React, { useState, useEffect, useRef, createContext, useContext, useCallback } from "react";
 
-export const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+export const API = process.env.NEXT_PUBLIC_API_URL || "/api";
 export const authH = (t: string) => ({ Authorization: `Bearer ${t}`, "Content-Type": "application/json" });
 
 // ===== Toast =====
