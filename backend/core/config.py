@@ -24,3 +24,7 @@ SQS_QUEUE_URL = os.getenv("SQS_QUEUE_URL", "")
 
 # 退订链接的基础 URL（公网可访问的后端地址）
 UNSUBSCRIBE_BASE_URL = os.getenv("UNSUBSCRIBE_BASE_URL", "")
+
+# AWS Bedrock（AI 邮件优化）
+BEDROCK_MODEL_ID = os.getenv("BEDROCK_MODEL_ID", "global.anthropic.claude-opus-4-6-v1")
+BEDROCK_REGION = os.getenv("BEDROCK_REGION", os.getenv("AWS_REGION", "us-east-1"))

@@ -5,27 +5,56 @@ import { API, authH, useAuth, useToast, useConfirm, Card, Btn, Input, Textarea, 
 export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
   const {token}=useAuth(); const {toast}=useToast(); const {confirm:cfm}=useConfirm();
   const [list,setList]=useState<any[]>([]);
-  const [showCreate,setShowCreate]=useState(false);
-  const [showEdit,setShowEdit]=useState(false);
+  const [mode,setMode]=useState<"list"|"create"|"edit">("list");
   const [f,setF]=useState({name:"",subject:"",html_body:""});
   const [editId,setEditId]=useState<number|null>(null);
   const [previewTab,setPreviewTab]=useState<"code"|"preview"|"split">("split");
+
+  // AI 优化
+  const [aiLoading,setAiLoading]=useState(false);
+  const [aiResult,setAiResult]=useState<{suggestions:string[];optimized_subject:string;optimized_html:string}|null>(null);
+  const [aiFeedback,setAiFeedback]=useState("");
+
+  const aiOptimize=async(feedback?:string)=>{
+    const useOriginal = !feedback;
+    const subj = useOriginal ? f.subject : (aiResult?.optimized_subject || f.subject);
+    const body = useOriginal ? f.html_body : (aiResult?.optimized_html || f.html_body);
+    if(!body.trim())return toast("warning","请先编写邮件内容");
+    setAiLoading(true);
+    if(useOriginal) setAiResult(null);
+    try{
+      const payload:any = {subject:subj, html_body:body};
+      if(feedback?.trim()) payload.user_feedback = feedback.trim();
+      const r=await fetch(`${API}/ai/optimize-template`,{method:"POST",headers:authH(token),body:JSON.stringify(payload)});
+      const d=await r.json();
+      if(r.ok){setAiResult(d);setShowAi(true);setAiFeedback("");}
+      else toast("error","AI 优化失败",d.detail||"请检查 Bedrock 配置");
+    }catch(e:any){toast("error","AI 优化失败",e?.message||"网络错误，请重试");}
+    finally{setAiLoading(false);}
+  };
+  const applyAi=()=>{
+    if(aiResult){setF(prev=>({...prev,subject:aiResult.optimized_subject,html_body:aiResult.optimized_html}));setAiResult(null);setShowAi(false);toast("success","已采纳 AI 优化");}
+  };
+
+  const [showAi,setShowAi]=useState(false);
 
   const load=async()=>{const d=await(await fetch(`${API}${apiPrefix}`,{headers:authH(token)})).json();setList(Array.isArray(d)?d:[]);}; useEffect(()=>{load();},[]);
 
   const create=async()=>{
     if(!f.name||!f.subject||!f.html_body)return toast("warning","请填写完整");
     const r=await fetch(`${API}${apiPrefix}`,{method:"POST",headers:authH(token),body:JSON.stringify(f)});
-    if(r.ok){toast("success","模版创建成功");setShowCreate(false);load();}
+    if(r.ok){toast("success","模版创建成功");setMode("list");load();}
     else{const e=await r.json();toast("error","失败",e.detail);}
   };
 
-  const openEdit=(t:any)=>{setEditId(t.id);setF({name:t.name,subject:t.subject,html_body:t.html_body});setShowEdit(true);setPreviewTab("split");};
+  const openEdit=(t:any)=>{setEditId(t.id);setF({name:t.name,subject:t.subject,html_body:t.html_body});setMode("edit");setPreviewTab("split");setAiResult(null);};
+  const openCreate=()=>{setF({name:"",subject:"",html_body:""});setMode("create");setPreviewTab("split");setAiResult(null);};
+  const goBack=()=>{setMode("list");setAiResult(null);};
 
   const update=async()=>{
     if(!f.subject||!f.html_body)return toast("warning","请填写完整");
     const r=await fetch(`${API}${apiPrefix}/${editId}`,{method:"PUT",headers:authH(token),body:JSON.stringify({subject:f.subject,html_body:f.html_body})});
-    if(r.ok){toast("success","模版已更新");setShowEdit(false);load();}
+    if(r.ok){toast("success","模版已更新");setMode("list");load();}
     else{const e=await r.json();toast("error","更新失败",e.detail);}
   };
 
@@ -50,13 +79,8 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
     {label:"退订链接",val:"{{unsubscribe_url}}"},
   ];
 
-  const insertSnippet = (html:string) => {
-    setF(prev=>({...prev,html_body:prev.html_body+html}));
-  };
-
-  const insertVariable = (val:string) => {
-    setF(prev=>({...prev,html_body:prev.html_body+val}));
-  };
+  const insertSnippet = (html:string) => { setF(prev=>({...prev,html_body:prev.html_body+html})); };
+  const insertVariable = (val:string) => { setF(prev=>({...prev,html_body:prev.html_body+val})); };
 
   const [uploading,setUploading]=useState(false);
   const fileInputRef=useRef<HTMLInputElement>(null);
@@ -66,13 +90,11 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
     if (file.size > 5*1024*1024) { toast("warning","图片不能超过 5MB"); return; }
     setUploading(true);
     try {
-      const fd = new FormData();
-      fd.append("file", file);
+      const fd = new FormData(); fd.append("file", file);
       const r = await fetch(`${API}/upload/image`, {method:"POST", headers:{"Authorization":`Bearer ${token}`}, body:fd});
       if (!r.ok) { const e = await r.json(); toast("error","上传失败",e.detail); return; }
       const d = await r.json();
-      const imgUrl = `${API}${d.url}`;
-      const imgHtml = `<img src="${imgUrl}" alt="${file.name}" style="max-width:100%;height:auto;border-radius:8px;" />\n`;
+      const imgHtml = `<img src="${API}${d.url}" alt="${file.name}" style="max-width:100%;height:auto;border-radius:8px;" />\n`;
       setF(prev=>({...prev,html_body:prev.html_body+imgHtml}));
       toast("success","图片已上传",file.name);
     } catch { toast("error","上传失败","网络错误"); }
@@ -83,12 +105,7 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
     const items = e.clipboardData?.items;
     if (!items) return;
     for (let i = 0; i < items.length; i++) {
-      if (items[i].type.startsWith("image/")) {
-        e.preventDefault();
-        const file = items[i].getAsFile();
-        if (file) uploadImage(file);
-        return;
-      }
+      if (items[i].type.startsWith("image/")) { e.preventDefault(); const file = items[i].getAsFile(); if (file) uploadImage(file); return; }
     }
   };
 
@@ -96,14 +113,11 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
     e.preventDefault();
     const files = e.dataTransfer?.files;
     if (!files) return;
-    for (let i = 0; i < files.length; i++) {
-      if (files[i].type.startsWith("image/")) { uploadImage(files[i]); return; }
-    }
+    for (let i = 0; i < files.length; i++) { if (files[i].type.startsWith("image/")) { uploadImage(files[i]); return; } }
   };
 
   const getPreviewHtml = (body:string) => {
     const subjectLine = f.subject ? f.subject.replace(/\{\{(\w+)\}\}/g, '<span style="background:#fef3c7;padding:1px 4px;border-radius:3px;color:#92400e;">$1</span>') : '';
-    // Replace {{unsubscribe_url}} inside href with a placeholder URL before highlighting other vars
     let previewBody = body.replace(/href=["']?\{\{unsubscribe_url\}\}["']?/g, 'href="#unsubscribe-preview"');
     previewBody = previewBody.replace(/\{\{(\w+)\}\}/g, '<span style="background:#fef3c7;padding:1px 4px;border-radius:3px;color:#92400e;font-size:inherit;">$1</span>');
     return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f9fafb;}</style></head><body>
@@ -114,117 +128,11 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
     </body></html>`;
   };
 
-  const renderEditor = (isCreate:boolean) => (
-    <div className="space-y-4">
-      {isCreate && <div><label className="text-sm font-medium text-gray-700 mb-1.5 block">模版名称</label><Input placeholder="输入模版名称" value={f.name} onChange={(e:any)=>setF({...f,name:e.target.value})}/></div>}
-      {!isCreate && <div><label className="text-sm font-medium text-gray-700 mb-1.5 block">模版名称</label><Input value={f.name} disabled className="bg-gray-50 opacity-60"/></div>}
-      <div><label className="text-sm font-medium text-gray-700 mb-1.5 block">邮件主题</label><Input placeholder="支持 {{name}} 变量" value={f.subject} onChange={(e:any)=>setF({...f,subject:e.target.value})}/></div>
+  const aiPreviewHtml = (body:string) => `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{margin:0;padding:16px;font-family:-apple-system,BlinkMacSystemFont,sans-serif;font-size:14px;color:#333;}</style></head><body>${body}</body></html>`;
 
-      <div>
-        <div className="flex items-center justify-between mb-2">
-          <label className="text-sm font-medium text-gray-700">HTML 内容</label>
-          <div className="flex bg-gray-100 rounded-lg p-0.5">
-            {([["code","代码"],["split","分屏"],["preview","预览"]] as const).map(([id,label])=>(
-              <button key={id} onClick={()=>setPreviewTab(id)} className={`px-3 py-1 text-xs rounded-md transition-all ${previewTab===id?"bg-white text-indigo-600 shadow-sm font-medium":"text-gray-500 hover:text-gray-700"}`}>{label}</button>
-            ))}
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-1 mb-2 p-2 bg-gray-50 border border-gray-200 rounded-t-lg">
-          <span className="text-xs text-gray-400 mr-1">插入：</span>
-          {snippets.map(s=>(
-            <button key={s.label} onClick={()=>insertSnippet(s.html)} title={s.label}
-              className="px-2 py-1 text-xs bg-white border border-gray-200 rounded-md hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-600 transition-all text-gray-600">
-              <span className="mr-0.5">{s.icon}</span>{s.label}
-            </button>
-          ))}
-          <span className="w-px h-5 bg-gray-200 mx-1"/>
-          <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={e=>{const file=e.target.files?.[0];if(file)uploadImage(file);e.target.value="";}}/>
-          <button onClick={()=>fileInputRef.current?.click()} disabled={uploading}
-            className="px-2 py-1 text-xs bg-emerald-50 border border-emerald-200 rounded-md hover:bg-emerald-100 transition-all text-emerald-700 disabled:opacity-50">
-            {uploading?"上传中...":"📤 上传图片"}
-          </button>
-          <span className="w-px h-5 bg-gray-200 mx-1"/>
-          <button onClick={()=>insertSnippet('<div style="text-align:center;padding:16px 0;margin-top:24px;border-top:1px solid #eee;"><a href="{{unsubscribe_url}}" style="color:#999;font-size:12px;text-decoration:underline;">取消订阅 / Unsubscribe</a></div>\n')}
-            className="px-2.5 py-1 text-xs bg-red-50 border border-red-200 rounded-md hover:bg-red-100 transition-all text-red-600 font-medium">
-            🚫 插入退订链接
-          </button>
-          <span className="w-px h-5 bg-gray-200 mx-1"/>
-          <span className="text-xs text-gray-400 mr-1">变量：</span>
-          {variables.map(v=>(
-            <button key={v.val} onClick={()=>insertVariable(v.val)}
-              className="px-2 py-1 text-xs bg-amber-50 border border-amber-200 rounded-md hover:bg-amber-100 transition-all text-amber-700 font-mono">
-              {v.val}
-            </button>
-          ))}
-          <span className="text-xs text-gray-300 ml-1" title="联系人的自定义属性也可作为变量使用，如 {{company}}、{{city}} 等">自定义属性可用 {"{{key}}"}</span>
-          <span className="text-xs text-gray-300 ml-auto">支持粘贴/拖拽图片</span>
-        </div>
-
-        <div className={`border border-gray-200 rounded-b-lg overflow-hidden ${previewTab==="split"?"flex":""}`} style={{minHeight:320}}
-          onDragOver={e=>{e.preventDefault();e.stopPropagation();}} onDrop={handleDrop}>
-          {(previewTab==="code"||previewTab==="split") && (
-            <div className={previewTab==="split"?"w-1/2 border-r border-gray-200":"w-full"}>
-              <div className="bg-gray-50 px-3 py-1.5 border-b border-gray-200 flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded-full bg-red-400"/>
-                <span className="w-2.5 h-2.5 rounded-full bg-yellow-400"/>
-                <span className="w-2.5 h-2.5 rounded-full bg-green-400"/>
-                <span className="text-xs text-gray-400 ml-2">HTML 源码</span>
-              </div>
-              <textarea
-                value={f.html_body}
-                onChange={e=>setF({...f,html_body:e.target.value})}
-                onPaste={handlePaste}
-                placeholder="在此编写 HTML 邮件内容...&#10;&#10;支持：粘贴图片 (Ctrl+V) / 拖拽图片到此处"
-                className="w-full h-full p-3 text-sm font-mono text-gray-700 bg-gray-900 text-green-400 resize-none outline-none"
-                style={{minHeight:280,background:"#1e1e2e",color:"#a6e3a1",caretColor:"#fff"}}
-                spellCheck={false}
-              />
-            </div>
-          )}
-          {(previewTab==="preview"||previewTab==="split") && (
-            <div className={previewTab==="split"?"w-1/2":"w-full"}>
-              <div className="bg-gray-50 px-3 py-1.5 border-b border-gray-200 flex items-center gap-1.5">
-                <span className="text-xs text-gray-400">📧 邮件预览</span>
-                {f.html_body && <span className="text-xs text-green-500 ml-auto">实时预览</span>}
-              </div>
-              <div className="bg-white" style={{minHeight:280}}>
-                {f.html_body ? (
-                  <iframe
-                    srcDoc={getPreviewHtml(f.html_body)}
-                    className="w-full border-0"
-                    style={{minHeight:280,height:"100%"}}
-                    sandbox="allow-same-origin"
-                    title="邮件预览"
-                  />
-                ) : (
-                  <div className="flex items-center justify-center h-full text-gray-300 text-sm" style={{minHeight:280}}>
-                    <div className="text-center"><p className="text-3xl mb-2">📧</p><p>在左侧编写 HTML 后</p><p>此处将实时预览邮件效果</p></div>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div className="flex justify-end gap-2">
-        <Btn variant="outline" onClick={()=>{isCreate?setShowCreate(false):setShowEdit(false);}}>取消</Btn>
-        {isCreate ? <Btn variant="success" onClick={create}>保存模版</Btn> : <Btn onClick={update}>保存修改</Btn>}
-      </div>
-    </div>
-  );
-
-  return <>
-    <Modal open={showCreate} onClose={()=>setShowCreate(false)} title="新建邮件模版" width={1000}>
-      {renderEditor(true)}
-    </Modal>
-
-    <Modal open={showEdit} onClose={()=>setShowEdit(false)} title={`编辑模版 - ${f.name}`} width={1000}>
-      {renderEditor(false)}
-    </Modal>
-
-    <Card title="邮件模版" extra={<Btn size="sm" onClick={()=>{setF({name:"",subject:"",html_body:""});setShowCreate(true);setPreviewTab("split");}}>+ 新建模版</Btn>}>
+  // ========== 列表视图 ==========
+  if (mode === "list") {
+    return <Card title="邮件模版" extra={<Btn size="sm" onClick={openCreate}>+ 新建模版</Btn>}>
       <div className="overflow-x-auto"><table className="w-full">
         <thead><tr className="border-b border-gray-100">{["模版名称","邮件主题","创建时间","操作"].map(h=><th key={h} className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider py-3 px-4">{h}</th>)}</tr></thead>
         <tbody>{list.map((t:any)=><tr key={t.id} className="border-b border-gray-50 hover:bg-gray-50/50 transition">
@@ -235,6 +143,177 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
         </tr>)}</tbody>
       </table></div>
       {list.length===0&&<p className="text-center py-8 text-sm text-gray-400">暂无模版</p>}
+    </Card>;
+  }
+
+  // ========== 编辑器视图（新建/编辑共用） ==========
+  const isCreate = mode === "create";
+
+  return <div className="space-y-4">
+    {/* 顶部导航栏 */}
+    <div className="flex items-center justify-between">
+      <div className="flex items-center gap-3">
+        <button onClick={goBack} className="text-gray-400 hover:text-gray-700 transition text-sm flex items-center gap-1">
+          <span className="text-lg leading-none">&larr;</span> 返回列表
+        </button>
+        <span className="text-gray-200">|</span>
+        <h2 className="text-lg font-semibold text-gray-800">{isCreate?"新建邮件模版":`编辑模版 - ${f.name}`}</h2>
+      </div>
+      <div className="flex gap-2">
+        <Btn variant="outline" onClick={()=>aiOptimize()} disabled={aiLoading} className="border-purple-300 text-purple-600 hover:bg-purple-50">
+          {aiLoading?"AI 分析中...":"✨ AI 优化"}
+        </Btn>
+        <Btn variant="outline" onClick={goBack}>取消</Btn>
+        {isCreate ? <Btn variant="success" onClick={create}>保存模版</Btn> : <Btn onClick={update}>保存修改</Btn>}
+      </div>
+    </div>
+
+    {/* AI 优化结果（弹窗） */}
+    <Modal open={showAi} onClose={()=>setShowAi(false)} title="AI 优化建议" width={1000}>
+      {aiResult&&<div className="space-y-4 max-h-[70vh] overflow-y-auto">
+        <div className="bg-purple-50 border border-purple-200 rounded-xl p-4">
+          <h3 className="text-sm font-semibold text-purple-700 mb-2">优化建议</h3>
+          <ul className="space-y-1.5">{aiResult.suggestions.map((s,i)=>(
+            <li key={i} className="flex gap-2 text-sm text-purple-900"><span className="text-purple-400 flex-shrink-0">{i+1}.</span><span>{s}</span></li>
+          ))}</ul>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+            <p className="text-xs text-gray-400 mb-1">原始主题</p>
+            <p className="text-sm text-gray-700">{f.subject||"(空)"}</p>
+          </div>
+          <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+            <p className="text-xs text-green-600 mb-1">优化后主题</p>
+            <p className="text-sm text-green-800 font-medium">{aiResult.optimized_subject}</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="border border-gray-200 rounded-lg overflow-hidden">
+            <div className="bg-gray-100 px-3 py-1.5 text-xs text-gray-500 font-medium border-b border-gray-200">原始内容</div>
+            <iframe srcDoc={aiPreviewHtml(f.html_body)} className="w-full border-0" style={{height:280}} sandbox="allow-same-origin" title="原始"/>
+          </div>
+          <div className="border border-green-200 rounded-lg overflow-hidden">
+            <div className="bg-green-50 px-3 py-1.5 text-xs text-green-600 font-medium border-b border-green-200">优化后内容</div>
+            <iframe srcDoc={aiPreviewHtml(aiResult.optimized_html)} className="w-full border-0" style={{height:280}} sandbox="allow-same-origin" title="优化"/>
+          </div>
+        </div>
+        <div className="flex justify-end gap-3 pt-2 border-t border-gray-100">
+          <Btn variant="outline" onClick={()=>setShowAi(false)}>放弃</Btn>
+          <Btn onClick={applyAi} className="bg-purple-600 hover:bg-purple-700 text-white">采纳优化</Btn>
+        </div>
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mt-3">
+          <h3 className="text-sm font-semibold text-amber-700 mb-2">修改建议</h3>
+          <textarea
+            value={aiFeedback}
+            onChange={e=>setAiFeedback(e.target.value)}
+            placeholder="输入您的修改建议，例如：主题需要更简洁、正文语气更正式、增加促销力度..."
+            className="w-full border border-amber-200 rounded-lg p-3 text-sm resize-none outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-300"
+            rows={3}
+          />
+          <div className="flex justify-end mt-2">
+            <Btn
+              onClick={()=>aiOptimize(aiFeedback)}
+              disabled={aiLoading||!aiFeedback.trim()}
+              className="bg-amber-500 hover:bg-amber-600 text-white disabled:opacity-50"
+            >{aiLoading?"AI 重新优化中...":"🔄 基于建议再次优化"}</Btn>
+          </div>
+        </div>
+      </div>}
+    </Modal>
+
+    {/* 编辑器主体 */}
+    <Card>
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="text-sm font-medium text-gray-700 mb-1.5 block">模版名称</label>
+            {isCreate ? <Input placeholder="输入模版名称" value={f.name} onChange={(e:any)=>setF({...f,name:e.target.value})}/> : <Input value={f.name} disabled className="bg-gray-50 opacity-60"/>}
+          </div>
+          <div>
+            <label className="text-sm font-medium text-gray-700 mb-1.5 block">邮件主题</label>
+            <Input placeholder="支持 {{name}} 变量" value={f.subject} onChange={(e:any)=>setF({...f,subject:e.target.value})}/>
+          </div>
+        </div>
+
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <label className="text-sm font-medium text-gray-700">HTML 内容</label>
+            <div className="flex bg-gray-100 rounded-lg p-0.5">
+              {([["code","代码"],["split","分屏"],["preview","预览"]] as const).map(([id,label])=>(
+                <button key={id} onClick={()=>setPreviewTab(id)} className={`px-3 py-1 text-xs rounded-md transition-all ${previewTab===id?"bg-white text-indigo-600 shadow-sm font-medium":"text-gray-500 hover:text-gray-700"}`}>{label}</button>
+              ))}
+            </div>
+          </div>
+
+          {/* 工具栏 */}
+          <div className="flex flex-wrap items-center gap-1 mb-2 p-2 bg-gray-50 border border-gray-200 rounded-t-lg">
+            <span className="text-xs text-gray-400 mr-1">插入：</span>
+            {snippets.map(s=>(
+              <button key={s.label} onClick={()=>insertSnippet(s.html)} title={s.label}
+                className="px-2 py-1 text-xs bg-white border border-gray-200 rounded-md hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-600 transition-all text-gray-600">
+                <span className="mr-0.5">{s.icon}</span>{s.label}
+              </button>
+            ))}
+            <span className="w-px h-5 bg-gray-200 mx-1"/>
+            <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={e=>{const file=e.target.files?.[0];if(file)uploadImage(file);e.target.value="";}}/>
+            <button onClick={()=>fileInputRef.current?.click()} disabled={uploading}
+              className="px-2 py-1 text-xs bg-emerald-50 border border-emerald-200 rounded-md hover:bg-emerald-100 transition-all text-emerald-700 disabled:opacity-50">
+              {uploading?"上传中...":"上传图片"}
+            </button>
+            <button onClick={()=>insertSnippet('<div style="text-align:center;padding:16px 0;margin-top:24px;border-top:1px solid #eee;"><a href="{{unsubscribe_url}}" style="color:#999;font-size:12px;text-decoration:underline;">取消订阅 / Unsubscribe</a></div>\n')}
+              className="px-2 py-1 text-xs bg-red-50 border border-red-200 rounded-md hover:bg-red-100 transition-all text-red-600">
+              退订链接
+            </button>
+            <span className="w-px h-5 bg-gray-200 mx-1"/>
+            <span className="text-xs text-gray-400 mr-1">变量：</span>
+            {variables.map(v=>(
+              <button key={v.val} onClick={()=>insertVariable(v.val)}
+                className="px-2 py-1 text-xs bg-amber-50 border border-amber-200 rounded-md hover:bg-amber-100 transition-all text-amber-700 font-mono">
+                {v.val}
+              </button>
+            ))}
+          </div>
+
+          {/* 编辑区 */}
+          <div className={`border border-gray-200 rounded-b-lg overflow-hidden ${previewTab==="split"?"flex":""}`} style={{minHeight:600}}
+            onDragOver={e=>{e.preventDefault();e.stopPropagation();}} onDrop={handleDrop}>
+            {(previewTab==="code"||previewTab==="split") && (
+              <div className={previewTab==="split"?"w-1/2 border-r border-gray-200":"w-full"}>
+                <div className="bg-gray-50 px-3 py-1.5 border-b border-gray-200 flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-full bg-red-400"/><span className="w-2.5 h-2.5 rounded-full bg-yellow-400"/><span className="w-2.5 h-2.5 rounded-full bg-green-400"/>
+                  <span className="text-xs text-gray-400 ml-2">HTML 源码</span>
+                </div>
+                <textarea
+                  value={f.html_body}
+                  onChange={e=>setF({...f,html_body:e.target.value})}
+                  onPaste={handlePaste}
+                  placeholder={"在此编写 HTML 邮件内容...\n\n支持：粘贴图片 (Ctrl+V) / 拖拽图片到此处"}
+                  className="w-full h-full p-3 text-sm font-mono resize-none outline-none"
+                  style={{minHeight:560,background:"#1e1e2e",color:"#a6e3a1",caretColor:"#fff"}}
+                  spellCheck={false}
+                />
+              </div>
+            )}
+            {(previewTab==="preview"||previewTab==="split") && (
+              <div className={previewTab==="split"?"w-1/2":"w-full"}>
+                <div className="bg-gray-50 px-3 py-1.5 border-b border-gray-200 flex items-center gap-1.5">
+                  <span className="text-xs text-gray-400">邮件预览</span>
+                  {f.html_body && <span className="text-xs text-green-500 ml-auto">实时预览</span>}
+                </div>
+                <div className="bg-white" style={{minHeight:560}}>
+                  {f.html_body ? (
+                    <iframe srcDoc={getPreviewHtml(f.html_body)} className="w-full border-0" style={{minHeight:560,height:"100%"}} sandbox="allow-same-origin" title="邮件预览"/>
+                  ) : (
+                    <div className="flex items-center justify-center h-full text-gray-300 text-sm" style={{minHeight:560}}>
+                      <div className="text-center"><p className="text-3xl mb-2">📧</p><p>在左侧编写 HTML 后</p><p>此处将实时预览邮件效果</p></div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
     </Card>
-  </>;
+  </div>;
 }

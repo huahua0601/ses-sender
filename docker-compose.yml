@@ -32,6 +32,8 @@ services:
       - SES_CONFIGURATION_SET=${SES_CONFIGURATION_SET:-mytest123}
       - SQS_QUEUE_URL=${SQS_QUEUE_URL:-}
       - UNSUBSCRIBE_BASE_URL=${UNSUBSCRIBE_BASE_URL:-}
+      - BEDROCK_MODEL_ID=${BEDROCK_MODEL_ID:-global.anthropic.claude-opus-4-6-v1}
+      - BEDROCK_REGION=${BEDROCK_REGION:-us-east-1}
       - DATABASE_URL=mysql+pymysql://${MYSQL_USER:-ses_sender}:${MYSQL_PASSWORD:-ses_sender_123}@mysql:3306/${MYSQL_DATABASE:-ses_sender}
     volumes:
       - ./data/uploads:/app/uploads

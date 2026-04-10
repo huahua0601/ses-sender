@@ -23,3 +23,9 @@ class TemplateOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class OptimizeRequest(BaseModel):
+    subject: str
+    html_body: str
+    user_feedback: Optional[str] = None

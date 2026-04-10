@@ -5,10 +5,17 @@ from sqlalchemy.orm import Session
 from core.database import get_db
 from core.deps import get_current_user, require_admin
 from domain.auth.models import User
-from domain.template.schemas import TemplateCreate, TemplateUpdate, TemplateOut
+from domain.template.schemas import TemplateCreate, TemplateUpdate, TemplateOut, OptimizeRequest
 from domain.template import service
 
 router = APIRouter(tags=["邮件模版管理"])
+
+
+# ========== AI 优化 ==========
+@router.post("/ai/optimize-template")
+def optimize_template(req: OptimizeRequest, current_user: User = Depends(get_current_user)):
+    """调用 Bedrock AI 优化邮件模板"""
+    return service.optimize_template_with_ai(req.subject, req.html_body, req.user_feedback)
 
 
 # ========== 通用：按用户隔离的模版管理 ==========
