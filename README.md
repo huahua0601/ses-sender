@@ -20,7 +20,7 @@
 |------|------|
 | 用户管理 | 创建/编辑/禁用用户，为每个用户配置专属发送邮箱，重置密码 |
 | 发送实体 | 验证邮箱地址和域名（SES Identity） |
-| 邮件模版 | 创建/编辑/删除邮件模版（按用户隔离），支持 `{{name}}` 等变量 |
+| 邮件模版 | 创建/编辑/删除邮件模版（按用户隔离），支持 `{{name}}` 等变量，AI 智能优化 |
 | 测试邮件 | 选择已验证的发送实体或手动输入，自定义内容发送测试邮件 |
 
 ### 普通用户
@@ -28,10 +28,12 @@
 | 功能 | 说明 |
 |------|------|
 | 客群管理 | 创建/编辑/删除客群，搜索和分页 |
-| 联系人管理 | 批量添加联系人，Excel 导入/导出/模版下载，搜索和分页 |
-| 邮件模版 | 每个用户独立维护自己的邮件模版（创建/编辑/删除） |
-| 批量发送 | 选择模版和目标客群，使用自己的邮箱批量发送 |
-| 发送历史 | 查看历史发送记录，点击查看每个批次的送达率、打开率等指标 |
+| 联系人管理 | 批量添加联系人，Excel 导入/导出/模版下载，支持自定义属性（JSON），搜索和分页 |
+| 邮件模版 | 每个用户独立维护自己的邮件模版（创建/编辑/删除），HTML 实时预览，AI 智能优化 |
+| 批量发送 | 选择模版和目标客群，异步批量发送，自动速率限制，过滤已退订联系人 |
+| 发送历史 | 查看历史发送记录，实时发送进度，点击查看每个批次的送达率、打开率等指标 |
+| 邮件明细 | 独立页面查看每封邮件的送达/退信/打开/点击状态，支持搜索和筛选 |
+| 退订管理 | 查看和管理退订用户列表，支持恢复发送 |
 
 ## 技术栈
 
@@ -42,7 +44,10 @@
 | 数据库 | MySQL 8 |
 | 认证 | JWT (python-jose) + bcrypt |
 | 监控 | AWS CloudWatch + SES VDM（Virtual Deliverability Manager） |
-| 部署 | Docker / Docker Compose |
+| 事件追踪 | SNS → SQS → 后端轮询（每封邮件的送达/打开/点击/退信追踪） |
+| AI 优化 | AWS Bedrock（Claude）— 邮件模版智能优化建议 |
+| 退订 | RFC 8058 一键退订，HMAC-SHA256 签名令牌 |
+| 部署 | Docker / Docker Compose，前端反向代理后端 API（只暴露一个端口） |
 
 ## 项目结构
 
@@ -50,9 +55,10 @@
 ses-sender/
 ├── docker-compose.yml
 ├── .env.example
+├── setup-ses-events.sh            # SNS+SQS 一键配置脚本
 │
 ├── backend/
-│   ├── main.py                    # 应用入口，Alembic 迁移检查 + 路由注册
+│   ├── main.py                    # 应用入口，Alembic 迁移检查 + SQS 轮询 + 路由注册
 │   ├── alembic/                   # 数据库迁移
 │   │   ├── env.py
 │   │   └── versions/              # 迁移脚本
@@ -60,17 +66,19 @@ ses-sender/
 │   │   ├── config.py              #   配置中心
 │   │   ├── database.py            #   数据库连接
 │   │   ├── deps.py                #   认证 & 权限依赖
-│   │   └── ses.py                 #   AWS SES 客户端
+│   │   ├── ses.py                 #   AWS SES v1/v2 客户端 + 发送配额
+│   │   └── unsubscribe.py         #   退订令牌生成/验证（HMAC-SHA256）
 │   └── domain/                    # 业务域（DDD）
 │       ├── auth/                  #   认证域：用户登录、用户管理
 │       ├── identity/              #   发送实体域：SES 邮箱/域名验证
-│       ├── template/              #   邮件模版域：按用户隔离的模版 CRUD
-│       ├── audience/              #   客群域：客群、联系人、Excel
-│       └── sending/               #   发送域：批量发送、发送历史、指标查询
+│       ├── template/              #   邮件模版域：按用户隔离的模版 CRUD + AI 优化
+│       ├── audience/              #   客群域：客群、联系人、自定义属性、Excel
+│       └── sending/               #   发送域：异步批量发送、发送历史、指标、退订
 │
 └── frontend/
     └── app/
-        └── page.tsx               # 单页应用（登录 / 管理员面板 / 用户面板）
+        ├── page.tsx               # 单页应用（登录 / 管理员面板 / 用户面板）
+        └── api/[...path]/route.ts # API 反向代理（转发至后端）
 ```
 
 每个业务域包含：
@@ -98,11 +106,18 @@ cp .env.example .env
 # AWS 区域
 AWS_REGION=us-east-1
 
-# 前端访问后端的地址（部署到服务器时改为公网 IP 或域名）
-NEXT_PUBLIC_API_URL=http://localhost:8000
-
 # SES Configuration Set（用于 VDM 追踪送达率/打开率，留空则不追踪）
 SES_CONFIGURATION_SET=ses-sender-tracking
+
+# SQS 队列 URL（用于每封邮件的事件追踪，留空则不追踪）
+SQS_QUEUE_URL=
+
+# 退订链接基础 URL（公网可访问的后端地址，留空则不添加退订链接）
+UNSUBSCRIBE_BASE_URL=
+
+# AI 模版优化（AWS Bedrock，留空则禁用 AI 功能）
+BEDROCK_MODEL_ID=global.anthropic.claude-opus-4-6-v1
+BEDROCK_REGION=us-east-1
 
 # MySQL 配置
 MYSQL_ROOT_PASSWORD=ses_sender_root_123
@@ -136,8 +151,9 @@ docker-compose up -d --build
 | 服务 | 地址 |
 |------|------|
 | 前端界面 | http://localhost:3000 |
-| 后端 API | http://localhost:8000 |
-| API 文档 | http://localhost:8000/docs |
+| API（通过前端代理） | http://localhost:3000/api/* |
+
+> 后端 API 仅在 Docker 内部网络可访问（端口 8000 不对外暴露），所有 API 请求通过前端 Next.js 反向代理转发。
 
 ### 5. 默认管理员
 
@@ -524,13 +540,19 @@ EC2 实例的 IAM Role 需要以下权限：
     "ses:DeleteTemplate",
     "ses:SendEmail",
     "ses:SendBulkTemplatedEmail",
+    "sesv2:SendEmail",
+    "sesv2:CreateEmailTemplate",
+    "sesv2:UpdateEmailTemplate",
+    "sesv2:DeleteEmailTemplate",
+    "sesv2:GetAccount",
     "cloudwatch:GetMetricStatistics",
     "cloudwatch:ListMetrics",
     "sns:CreateTopic",
     "sns:Subscribe",
     "sqs:ReceiveMessage",
     "sqs:DeleteMessage",
-    "sqs:GetQueueAttributes"
+    "sqs:GetQueueAttributes",
+    "bedrock:InvokeModel"
   ],
   "Resource": "*"
 }
@@ -539,14 +561,59 @@ EC2 实例的 IAM Role 需要以下权限：
 ## 注意事项
 
 1. **SES 沙箱模式**：新账户默认在沙箱模式，只能向已验证邮箱发送。需在 AWS 控制台申请移出沙箱。
-2. **批量发送限制**：SES 每次最多发送 50 封邮件，程序会自动分批处理。
-3. **发送邮箱**：普通用户的发送邮箱由管理员配置，用户无法自行修改。域名验证后可配置任意 `user@yourdomain.com` 格式的邮箱。
-4. **模版隔离**：每个用户独立维护自己的邮件模版，SES 中的模版名会自动加用户前缀避免冲突。
-5. **VDM Tag 限制**：SES Message Tag 值只允许 ASCII 字符，系统会自动将中文等非 ASCII 字符替换为下划线。
-6. **Configuration Set 注意事项**：
+2. **发送速率限制**：系统自动从 SES 获取 `MaxSendRate`，按 `min(MaxSendRate, 50)` 每秒发送，每批次后暂停 1 秒。
+3. **异步发送**：批量发送为异步模式，API 立即返回批次 ID，后台线程执行发送，前端可实时查看发送进度。
+4. **发送邮箱**：普通用户的发送邮箱由管理员配置，用户无法自行修改。域名验证后可配置任意 `user@yourdomain.com` 格式的邮箱。
+5. **模版隔离**：每个用户独立维护自己的邮件模版，SES 中的模版名会自动加用户前缀避免冲突。
+6. **VDM Tag 限制**：SES Message Tag 值只允许 ASCII 字符，系统会自动将中文等非 ASCII 字符替换为下划线。
+7. **SQS 事件追踪**：配置 `SQS_QUEUE_URL` 后，后端自动轮询 SQS 获取每封邮件的送达/退信/打开/点击事件。未配置时服务正常启动，仅无法追踪单封邮件状态。
+8. **Configuration Set 注意事项**：
    - 必须关闭 Suppression List 和 Optimized Shared Delivery
    - TLS Policy 建议设为 OPTIONAL
    - 修改环境变量后需要 `docker-compose down && docker-compose up -d`，`restart` 不会生效
+
+## 一键退订
+
+系统支持 Gmail/Yahoo 一键退订要求（RFC 8058）：
+
+- 配置 `UNSUBSCRIBE_BASE_URL` 后，每封邮件自动添加 `List-Unsubscribe` 和 `List-Unsubscribe-Post` 头部
+- `POST /unsubscribe` — RFC 8058 标准处理接口（邮件客户端自动调用）
+- `GET /unsubscribe` — 退订确认页面（浏览器访问时展示）
+- 已退订的联系人在后续发送中自动跳过
+- 退订令牌使用 HMAC-SHA256 签名防止伪造
+- 在"退订管理"页面可查看所有退订记录，支持"恢复发送"操作
+
+**配置方式**：在 `.env` 中设置 `UNSUBSCRIBE_BASE_URL` 为公网可访问的后端 URL（如 `https://api.example.com`）。
+
+> 也可在邮件模版中使用 `{{unsubscribe_url}}` 变量插入自定义退订链接。模版编辑器提供"插入退订链接"快捷按钮。
+
+## AI 邮件模版优化
+
+基于 AWS Bedrock（Claude）的邮件模版智能优化功能：
+
+- 一键分析邮件模版，从送达率、打开率、点击率、移动端适配、合规性等维度提供优化建议
+- AI 自动生成优化后的主题行和 HTML 内容
+- 支持对比原始内容和优化结果（主题和 HTML 预览并排展示）
+- **迭代优化**：对 AI 结果不满意时，可输入修改建议让 AI 基于上次结果再次优化
+- 采纳后一键应用到模版编辑器
+
+**配置方式**：在 `.env` 中设置：
+```env
+BEDROCK_MODEL_ID=global.anthropic.claude-opus-4-6-v1
+BEDROCK_REGION=us-east-1
+```
+
+**IAM 权限**：需要 `bedrock:InvokeModel` 权限。
+
+## 联系人自定义属性
+
+联系人支持自定义 JSON 属性，用于个性化邮件内容：
+
+- 在联系人管理中可为每个联系人设置键值对属性（如 `company`、`city`、`plan` 等）
+- Excel 导入时，除 `name` 和 `email` 列外的其他列自动识别为自定义属性
+- Excel 导出时，自定义属性自动展开为独立列
+- 在邮件模版中使用 `{{属性名}}` 引用（如 `{{company}}`、`{{city}}`）
+- 发送时系统自动将联系人属性替换到模版变量中
 
 ## License
 

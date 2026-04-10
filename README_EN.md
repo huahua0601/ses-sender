@@ -20,7 +20,7 @@ A bulk email management platform built on AWS SES with a separated frontend/back
 |---------|-------------|
 | User Management | Create/edit/disable users, assign dedicated sending emails, reset passwords |
 | Sending Identities | Verify email addresses and domains (SES Identity) |
-| Email Templates | Create/edit/delete templates (isolated per user), supports `{{name}}` variables |
+| Email Templates | Create/edit/delete templates (isolated per user), supports `{{name}}` variables, AI-powered optimization |
 | Test Email | Send test emails using verified identities with custom content |
 
 ### Regular Users
@@ -28,11 +28,12 @@ A bulk email management platform built on AWS SES with a separated frontend/back
 | Feature | Description |
 |---------|-------------|
 | Contact Groups | Create/edit/delete groups with search and pagination |
-| Contact Management | Bulk add contacts, Excel import/export/template download |
-| Email Templates | Each user maintains independent templates (create/edit/delete) |
-| Bulk Sending | Select template and target group, send using assigned email |
-| Sending History | View historical records, click to see delivery rate, open rate, and other metrics per batch |
+| Contact Management | Bulk add contacts, Excel import/export/template download, custom JSON attributes |
+| Email Templates | Each user maintains independent templates (create/edit/delete), live HTML preview, AI-powered optimization |
+| Bulk Sending | Select template and target group, async sending with auto rate limiting, skips unsubscribed contacts |
+| Sending History | View historical records with real-time progress, click to see delivery rate, open rate, and other metrics per batch |
 | Email Details | Dedicated page with search/filter for per-email delivery status, open/click tracking |
+| Unsubscribe Management | View and manage unsubscribed users, restore sending capability |
 
 ## Tech Stack
 
@@ -44,7 +45,9 @@ A bulk email management platform built on AWS SES with a separated frontend/back
 | Auth | JWT (python-jose) + bcrypt |
 | Monitoring | AWS CloudWatch + SES VDM (Virtual Deliverability Manager) |
 | Event Tracking | SNS → SQS → Backend polling (per-email delivery/open/click/bounce) |
-| Deployment | Docker / Docker Compose |
+| AI Optimization | AWS Bedrock (Claude) — intelligent email template optimization |
+| Unsubscribe | RFC 8058 one-click unsubscribe, HMAC-SHA256 signed tokens |
+| Deployment | Docker / Docker Compose, frontend reverse-proxies backend API (single port exposure) |
 
 ## Project Structure
 
@@ -55,7 +58,7 @@ ses-sender/
 ├── setup-ses-events.sh          # One-click SNS+SQS setup script
 │
 ├── backend/
-│   ├── main.py                  # Entry point, Alembic migration + route registration
+│   ├── main.py                  # Entry point, Alembic migration + SQS polling + route registration
 │   ├── alembic/                 # Database migrations
 │   │   ├── env.py
 │   │   └── versions/
@@ -63,18 +66,19 @@ ses-sender/
 │   │   ├── config.py            #   Configuration
 │   │   ├── database.py          #   Database connection
 │   │   ├── deps.py              #   Auth & permission dependencies
-│   │   ├── ses.py               #   AWS SES v1/v2 clients
-│   │   └── unsubscribe.py       #   Unsubscribe token generation/verification
+│   │   ├── ses.py               #   AWS SES v1/v2 clients + send quota
+│   │   └── unsubscribe.py       #   Unsubscribe token generation/verification (HMAC-SHA256)
 │   └── domain/                  # Business domains (DDD)
 │       ├── auth/                #   Auth: login, user management
 │       ├── identity/            #   Sending identities: SES email/domain verification
-│       ├── template/            #   Email templates: per-user isolated CRUD
-│       ├── audience/            #   Audience: groups, contacts, Excel
-│       └── sending/             #   Sending: bulk send, history, metrics, unsubscribe
+│       ├── template/            #   Email templates: per-user isolated CRUD + AI optimization
+│       ├── audience/            #   Audience: groups, contacts, custom attributes, Excel
+│       └── sending/             #   Sending: async bulk send, history, metrics, unsubscribe
 │
 └── frontend/
     └── app/
-        └── page.tsx             # Single-page app (Login / Admin panel / User panel)
+        ├── page.tsx             # Single-page app (Login / Admin panel / User panel)
+        └── api/[...path]/route.ts  # API reverse proxy (forwards to backend)
 ```
 
 Each business domain contains:
@@ -102,17 +106,18 @@ Edit `.env` as needed:
 # AWS Region
 AWS_REGION=us-east-1
 
-# Frontend API URL (change to public IP or domain when deploying)
-NEXT_PUBLIC_API_URL=http://localhost:8000
-
 # SES Configuration Set (for VDM tracking, leave empty to skip)
 SES_CONFIGURATION_SET=ses-sender-tracking
 
 # SQS Queue URL (for per-email event tracking, leave empty to skip)
 SQS_QUEUE_URL=
 
-# Unsubscribe base URL (public-facing backend URL for one-click unsubscribe)
-UNSUBSCRIBE_BASE_URL=http://localhost:8000
+# Unsubscribe base URL (public-facing URL for one-click unsubscribe, leave empty to skip)
+UNSUBSCRIBE_BASE_URL=
+
+# AI template optimization (AWS Bedrock, leave empty to disable)
+BEDROCK_MODEL_ID=global.anthropic.claude-opus-4-6-v1
+BEDROCK_REGION=us-east-1
 
 # MySQL
 MYSQL_ROOT_PASSWORD=ses_sender_root_123
@@ -134,8 +139,9 @@ On first start, the backend automatically runs database migrations (Alembic) and
 | Service | URL |
 |---------|-----|
 | Frontend | http://localhost:3000 |
-| Backend API | http://localhost:8000 |
-| API Docs | http://localhost:8000/docs |
+| API (via frontend proxy) | http://localhost:3000/api/* |
+
+> The backend API is only accessible within the Docker internal network (port 8000 is not exposed externally). All API requests are forwarded through the Next.js frontend reverse proxy.
 
 ### 5. Default Admin
 
@@ -471,13 +477,15 @@ The EC2 instance IAM Role requires the following permissions:
     "sesv2:CreateEmailTemplate",
     "sesv2:UpdateEmailTemplate",
     "sesv2:DeleteEmailTemplate",
+    "sesv2:GetAccount",
     "cloudwatch:GetMetricStatistics",
     "cloudwatch:ListMetrics",
     "sns:CreateTopic",
     "sns:Subscribe",
     "sqs:ReceiveMessage",
     "sqs:DeleteMessage",
-    "sqs:GetQueueAttributes"
+    "sqs:GetQueueAttributes",
+    "bedrock:InvokeModel"
   ],
   "Resource": "*"
 }
@@ -486,15 +494,44 @@ The EC2 instance IAM Role requires the following permissions:
 ## Important Notes
 
 1. **SES Sandbox Mode**: New accounts are in sandbox mode by default — can only send to verified emails. Request production access via AWS Console.
-2. **Sending Rate Limit**: The system automatically queries `MaxSendRate` from SES and adjusts batch size accordingly (`min(MaxSendRate, 50)` emails per second).
-3. **Sending Email**: Each user's sending email is configured by the admin. After domain verification, any `user@yourdomain.com` format can be assigned.
-4. **Template Isolation**: Each user maintains independent templates. SES template names are auto-prefixed per user to avoid conflicts.
-5. **Async Sending**: Bulk sends run asynchronously in background threads. The API returns immediately with a batch ID, and progress can be polled via the progress API.
+2. **Sending Rate Limit**: The system automatically queries `MaxSendRate` from SES and adjusts batch size accordingly (`min(MaxSendRate, 50)` emails per second with 1-second pauses between batches).
+3. **Async Sending**: Bulk sends run asynchronously in background threads. The API returns immediately with a batch ID, and progress can be polled in real-time from the sending history page.
+4. **Sending Email**: Each user's sending email is configured by the admin. After domain verification, any `user@yourdomain.com` format can be assigned.
+5. **Template Isolation**: Each user maintains independent templates. SES template names are auto-prefixed per user to avoid conflicts.
 6. **SQS Event Tracking**: When `SQS_QUEUE_URL` is configured, the backend polls SQS for per-email events (delivery, bounce, open, click, complaint). If not configured, the service starts normally without event tracking.
-7. **Configuration Set Notes**:
+7. **Frontend Reverse Proxy**: The frontend acts as a reverse proxy for all API requests (`/api/*` → backend:8000). Only port 3000 needs to be exposed externally.
+8. **Configuration Set Notes**:
    - Must disable Suppression List and Optimized Shared Delivery
    - TLS Policy should be set to OPTIONAL
    - After changing env vars, use `docker-compose down && docker-compose up -d` — `restart` won't apply changes
+
+## AI Email Template Optimization
+
+Intelligent email template optimization powered by AWS Bedrock (Claude):
+
+- One-click analysis of email templates across deliverability, open rate, click rate, mobile responsiveness, compliance, and HTML quality
+- AI automatically generates optimized subject line and HTML content
+- Side-by-side comparison of original and optimized content (subject and HTML preview)
+- **Iterative refinement**: If unsatisfied with AI results, provide modification suggestions and let AI re-optimize based on your feedback
+- One-click apply to template editor
+
+**Setup**: Set in `.env`:
+```env
+BEDROCK_MODEL_ID=global.anthropic.claude-opus-4-6-v1
+BEDROCK_REGION=us-east-1
+```
+
+**IAM Permission**: Requires `bedrock:InvokeModel`.
+
+## Custom Contact Attributes
+
+Contacts support custom JSON attributes for email personalization:
+
+- Set key-value pair attributes for each contact (e.g., `company`, `city`, `plan`)
+- Excel import: columns beyond `name` and `email` are automatically recognized as custom attributes
+- Excel export: custom attributes are expanded into separate columns
+- Use `{{attribute_name}}` in email templates (e.g., `{{company}}`, `{{city}}`)
+- Attributes are automatically replaced during email sending
 
 ## License
 
