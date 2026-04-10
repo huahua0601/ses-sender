@@ -235,3 +235,48 @@ def get_job_progress(
         "error_message": job.error_message,
         "finished_at": job.finished_at.isoformat() if job.finished_at else None,
     }
+
+
+@router.get("/unsubscribe-list")
+def list_unsubscribes(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    search: str = Query("", description="搜索邮箱"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """查询当前用户发送邮箱的退订列表"""
+    import math
+    from domain.sending.models import UnsubscribeRecord
+    query = db.query(UnsubscribeRecord)
+    if current_user.is_admin:
+        pass
+    else:
+        if not current_user.email:
+            return {"items": [], "total": 0, "page": 1, "page_size": page_size, "total_pages": 1}
+        query = query.filter(UnsubscribeRecord.source_email == current_user.email)
+    if search:
+        query = query.filter(UnsubscribeRecord.email.contains(search))
+    total = query.count()
+    total_pages = max(1, math.ceil(total / page_size))
+    rows = query.order_by(UnsubscribeRecord.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    items = [{"id": r.id, "email": r.email, "source_email": r.source_email, "reason": r.reason, "unsubscribed_at": r.unsubscribed_at.isoformat() if r.unsubscribed_at else None} for r in rows]
+    return {"items": items, "total": total, "page": page, "page_size": page_size, "total_pages": total_pages}
+
+
+@router.delete("/unsubscribe-list/{record_id}")
+def delete_unsubscribe(
+    record_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """删除退订记录（恢复发送）"""
+    from domain.sending.models import UnsubscribeRecord
+    record = db.query(UnsubscribeRecord).filter(UnsubscribeRecord.id == record_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="记录不存在")
+    if not current_user.is_admin and record.source_email != current_user.email:
+        raise HTTPException(status_code=403, detail="无权操作")
+    db.delete(record)
+    db.commit()
+    return {"message": "已恢复，该邮箱将重新接收邮件"}

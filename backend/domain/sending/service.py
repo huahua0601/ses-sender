@@ -172,11 +172,15 @@ def send_bulk_email(
                         unsub_token = generate_unsubscribe_token(recipient, source_email)
                         unsub_url = f"{UNSUBSCRIBE_BASE_URL}/unsubscribe?token={unsub_token}"
 
-                        # 替换模板变量（name, email + 自定义属性）
+                        # 替换模板变量（name, email + 退订链接 + 自定义属性）
                         def _replace_vars(template: str) -> str:
                             if not template:
                                 return ""
                             result = template.replace("{{name}}", name).replace("{{email}}", recipient)
+                            if UNSUBSCRIBE_BASE_URL:
+                                result = result.replace("{{unsubscribe_url}}", unsub_url)
+                            else:
+                                result = result.replace("{{unsubscribe_url}}", "#")
                             for k, v in contact.get("attributes", {}).items():
                                 result = result.replace("{{" + k + "}}", str(v))
                             return result

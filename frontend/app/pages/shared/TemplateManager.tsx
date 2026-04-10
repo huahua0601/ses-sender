@@ -47,6 +47,7 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
     {label:"邮箱",val:"{{email}}"},
     {label:"公司",val:"{{company}}"},
     {label:"日期",val:"{{date}}"},
+    {label:"退订链接",val:"{{unsubscribe_url}}"},
   ];
 
   const insertSnippet = (html:string) => {
@@ -102,10 +103,13 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
 
   const getPreviewHtml = (body:string) => {
     const subjectLine = f.subject ? f.subject.replace(/\{\{(\w+)\}\}/g, '<span style="background:#fef3c7;padding:1px 4px;border-radius:3px;color:#92400e;">$1</span>') : '';
+    // Replace {{unsubscribe_url}} inside href with a placeholder URL before highlighting other vars
+    let previewBody = body.replace(/href=["']?\{\{unsubscribe_url\}\}["']?/g, 'href="#unsubscribe-preview"');
+    previewBody = previewBody.replace(/\{\{(\w+)\}\}/g, '<span style="background:#fef3c7;padding:1px 4px;border-radius:3px;color:#92400e;font-size:inherit;">$1</span>');
     return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f9fafb;}</style></head><body>
       <div style="max-width:640px;margin:0 auto;background:#fff;">
         ${subjectLine ? `<div style="background:#f8fafc;padding:12px 20px;border-bottom:1px solid #e5e7eb;"><span style="color:#9ca3af;font-size:12px;">主题：</span><span style="color:#374151;font-size:13px;">${subjectLine}</span></div>` : ''}
-        <div style="padding:24px 20px;">${body.replace(/\{\{(\w+)\}\}/g, '<span style="background:#fef3c7;padding:1px 4px;border-radius:3px;color:#92400e;font-size:inherit;">$1</span>')}</div>
+        <div style="padding:24px 20px;">${previewBody}</div>
       </div>
     </body></html>`;
   };
@@ -139,6 +143,11 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
           <button onClick={()=>fileInputRef.current?.click()} disabled={uploading}
             className="px-2 py-1 text-xs bg-emerald-50 border border-emerald-200 rounded-md hover:bg-emerald-100 transition-all text-emerald-700 disabled:opacity-50">
             {uploading?"上传中...":"📤 上传图片"}
+          </button>
+          <span className="w-px h-5 bg-gray-200 mx-1"/>
+          <button onClick={()=>insertSnippet('<div style="text-align:center;padding:16px 0;margin-top:24px;border-top:1px solid #eee;"><a href="{{unsubscribe_url}}" style="color:#999;font-size:12px;text-decoration:underline;">取消订阅 / Unsubscribe</a></div>\n')}
+            className="px-2.5 py-1 text-xs bg-red-50 border border-red-200 rounded-md hover:bg-red-100 transition-all text-red-600 font-medium">
+            🚫 插入退订链接
           </button>
           <span className="w-px h-5 bg-gray-200 mx-1"/>
           <span className="text-xs text-gray-400 mr-1">变量：</span>

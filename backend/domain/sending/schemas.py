@@ -36,6 +36,7 @@ class SendingJobOut(BaseModel):
 
 class SendingJobDetailOut(BaseModel):
     id: int
+    batch_id: Optional[str] = None
     message_id: Optional[str] = None
     recipient: str
     send_status: str
