@@ -29,6 +29,7 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
             "display_name": user.display_name,
             "email": user.email,
             "is_admin": user.is_admin,
+            "daily_send_limit": user.daily_send_limit or 1000,
         },
     }
 

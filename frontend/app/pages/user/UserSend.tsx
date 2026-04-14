@@ -6,9 +6,12 @@ export default function UserSend() {
   const {token,user}=useAuth(); const {toast}=useToast();
   const [ts,setTs]=useState<any[]>([]); const [gs,setGs]=useState<any[]>([]); const [f,setF]=useState({templateId:"",groupId:""}); const [ld,setLd]=useState(false);
   const [progress,setProgress]=useState<any>(null);
+  const [quota,setQuota]=useState<{daily_limit:number;today_sent:number;remaining:number}|null>(null);
   const pollRef=useRef<any>(null);
 
-  useEffect(()=>{Promise.all([fetch(`${API}/user/templates`,{headers:authH(token)}).then(r=>r.json()),fetch(`${API}/groups`,{headers:authH(token)}).then(r=>r.json())]).then(([t,g])=>{setTs(Array.isArray(t)?t:[]);setGs(Array.isArray(g?.items)?g.items:Array.isArray(g)?g:[]);});},[]);
+  const loadQuota=async()=>{try{const r=await fetch(`${API}/user/daily-quota`,{headers:authH(token)});if(r.ok)setQuota(await r.json());}catch{}};
+
+  useEffect(()=>{Promise.all([fetch(`${API}/user/templates`,{headers:authH(token)}).then(r=>r.json()),fetch(`${API}/groups`,{headers:authH(token)}).then(r=>r.json())]).then(([t,g])=>{setTs(Array.isArray(t)?t:[]);setGs(Array.isArray(g?.items)?g.items:Array.isArray(g)?g:[]);});loadQuota();},[]);
   useEffect(()=>()=>{if(pollRef.current)clearInterval(pollRef.current);},[]);
 
   const pollProgress=(batchId:string)=>{
@@ -24,6 +27,7 @@ export default function UserSend() {
           if(d.status==="success")toast("success","发送完成",`已发送 ${d.sent_count}/${d.total_contacts} 封`);
           else if(d.status==="partial")toast("warning","部分发送成功",d.error_message||"");
           else toast("error","发送失败",d.error_message||"");
+          loadQuota();
         }
       }catch{}
     },1500);
@@ -50,6 +54,24 @@ export default function UserSend() {
   return <div style={{maxWidth:640}}><Card title="批量发送邮件">
     <div className="space-y-4">
       <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4"><span className="text-sm text-indigo-700">发送邮箱：<strong>{user.email||"未配置（请联系管理员）"}</strong></span></div>
+      {quota&&<div className="bg-gray-50 border border-gray-200 rounded-xl p-4">
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-gray-600">今日发送配额</span>
+          <span className={`text-sm font-semibold ${quota.remaining<=0?"text-red-500":quota.remaining<100?"text-amber-500":"text-green-600"}`}>
+            剩余 {quota.remaining} 封
+          </span>
+        </div>
+        <div className="mt-2 h-2 bg-gray-200 rounded-full overflow-hidden">
+          <div className="h-full rounded-full transition-all duration-300" style={{
+            width:`${Math.min(100,quota.daily_limit>0?(quota.today_sent/quota.daily_limit*100):100)}%`,
+            background:quota.remaining<=0?"#EF4444":quota.remaining<100?"#F59E0B":"#10B981"
+          }}/>
+        </div>
+        <div className="flex justify-between text-xs text-gray-400 mt-1">
+          <span>已用 {quota.today_sent} 封</span>
+          <span>总限额 {quota.daily_limit} 封/天</span>
+        </div>
+      </div>}
       <div><label className="text-sm font-medium text-gray-700 mb-1.5 block">邮件模版</label><Select value={f.templateId} onChange={(e:any)=>setF({...f,templateId:e.target.value})}><option value="">选择邮件模版</option>{ts.map((t:any)=><option key={t.id} value={t.id}>{t.name} - {t.subject}</option>)}</Select></div>
       <div><label className="text-sm font-medium text-gray-700 mb-1.5 block">目标客群</label><Select value={f.groupId} onChange={(e:any)=>setF({...f,groupId:e.target.value})}><option value="">选择目标客群</option>{gs.map((g:any)=><option key={g.id} value={g.id}>{g.name}</option>)}</Select></div>
       <Btn onClick={send} disabled={ld||!user.email} className="w-full" size="lg">{ld?"发送中...":"开始批量发送"}</Btn>

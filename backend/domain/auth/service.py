@@ -39,6 +39,7 @@ def create_user(db: Session, data: UserCreate) -> User:
         email=data.email,
         is_admin=data.is_admin,
         is_active=True,
+        daily_send_limit=data.daily_send_limit,
     )
     db.add(user)
     db.commit()
@@ -55,6 +56,8 @@ def update_user(db: Session, user: User, data: UserUpdate) -> User:
         user.hashed_password = hash_password(data.password)
     if data.is_active is not None:
         user.is_active = data.is_active
+    if data.daily_send_limit is not None:
+        user.daily_send_limit = data.daily_send_limit
     db.commit()
     db.refresh(user)
     return user

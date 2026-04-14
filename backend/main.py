@@ -230,6 +230,47 @@ else:
     _sqs_logger.info("[SQS Worker] 未配置 SQS_QUEUE_URL，SQS 轮询未启动（将使用 Webhook 模式或不启用事件追踪）")
 
 
+# --- 定时任务调度线程 ---
+_scheduler_logger = logging.getLogger("ses-sender.scheduler")
+
+
+def _scheduler_worker():
+    """后台线程：每 30 秒检查一次到期的定时发送任务"""
+    _scheduler_logger.info("[Scheduler] 定时任务调度线程已启动")
+    while True:
+        try:
+            _time.sleep(30)
+            from datetime import datetime
+            from core.database import SessionLocal
+            from domain.sending.models import ScheduledJob
+
+            db = SessionLocal()
+            try:
+                now = datetime.utcnow()
+                due_jobs = db.query(ScheduledJob).filter(
+                    ScheduledJob.status == "active",
+                    ScheduledJob.next_run_at <= now,
+                ).all()
+
+                for job in due_jobs:
+                    _scheduler_logger.info(f"[Scheduler] 触发任务 #{job.id} ({job.schedule_type})")
+                    try:
+                        from domain.sending.service import execute_scheduled_job
+                        execute_scheduled_job(job.id)
+                    except Exception as e:
+                        _scheduler_logger.error(f"[Scheduler] 执行任务 #{job.id} 失败: {e}")
+            finally:
+                db.close()
+
+        except Exception as e:
+            _scheduler_logger.error(f"[Scheduler] 调度循环异常: {e}")
+            _time.sleep(10)
+
+
+_scheduler_thread = threading.Thread(target=_scheduler_worker, daemon=True)
+_scheduler_thread.start()
+
+
 @app.get("/")
 def root():
     return {"message": "SES Sender API is running"}

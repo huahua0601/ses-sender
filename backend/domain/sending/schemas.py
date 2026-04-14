@@ -55,3 +55,49 @@ class SendingJobDetailOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class ScheduledJobCreate(BaseModel):
+    template_id: int
+    group_id: int
+    schedule_type: str          # once / daily / weekly / monthly
+    scheduled_time: str         # ISO 格式日期时间字符串
+    cron_hour: int = 9
+    cron_minute: int = 0
+    day_of_week: Optional[int] = None   # 0-6 (周一-周日)
+    day_of_month: Optional[int] = None  # 1-31
+
+
+class ScheduledJobUpdate(BaseModel):
+    schedule_type: Optional[str] = None
+    scheduled_time: Optional[str] = None
+    cron_hour: Optional[int] = None
+    cron_minute: Optional[int] = None
+    day_of_week: Optional[int] = None
+    day_of_month: Optional[int] = None
+    status: Optional[str] = None
+
+
+class ScheduledJobOut(BaseModel):
+    id: int
+    user_id: int
+    template_id: int
+    group_id: int
+    template_name: str
+    group_name: str
+    schedule_type: str
+    scheduled_time: Optional[datetime] = None
+    cron_hour: int = 9
+    cron_minute: int = 0
+    day_of_week: Optional[int] = None
+    day_of_month: Optional[int] = None
+    status: str
+    next_run_at: Optional[datetime] = None
+    last_run_at: Optional[datetime] = None
+    run_count: int = 0
+    last_batch_id: Optional[str] = None
+    error_message: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True

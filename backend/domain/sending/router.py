@@ -95,6 +95,18 @@ def get_ses_quota(current_user: User = Depends(get_current_user)):
     return get_send_quota()
 
 
+@router.get("/user/daily-quota")
+def get_daily_quota(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """获取当前用户的每日发送配额使用情况"""
+    return service.get_user_daily_quota(db, current_user.id)
+
+
+@router.get("/user/dashboard")
+def get_user_dashboard(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """获取当前用户的发送统计 Dashboard"""
+    return service.get_user_dashboard(db, current_user.id)
+
+
 # ========== 管理员：测试邮件 ==========
 @router.post("/admin/test-email")
 def send_test_email(req: TestEmailRequest, admin: User = Depends(require_admin)):
@@ -105,6 +117,12 @@ def send_test_email(req: TestEmailRequest, admin: User = Depends(require_admin))
 
 
 # ========== 管理员：发送统计 ==========
+@router.get("/admin/users/quotas")
+def admin_users_quotas(admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """管理员：获取所有用户的当日发送量"""
+    return service.get_all_users_daily_quota(db)
+
+
 @router.get("/admin/sending-stats")
 def admin_sending_stats(admin: User = Depends(require_admin), db: Session = Depends(get_db)):
     return service.get_admin_stats(db)
@@ -280,3 +298,27 @@ def delete_unsubscribe(
     db.delete(record)
     db.commit()
     return {"message": "已恢复，该邮箱将重新接收邮件"}
+
+
+# ========== 定时发送 ==========
+from domain.sending.schemas import ScheduledJobCreate, ScheduledJobUpdate, ScheduledJobOut
+
+
+@router.get("/scheduled-jobs", response_model=list[ScheduledJobOut])
+def list_scheduled_jobs(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return service.list_scheduled_jobs(db, current_user.id)
+
+
+@router.post("/scheduled-jobs", response_model=ScheduledJobOut)
+def create_scheduled_job(data: ScheduledJobCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return service.create_scheduled_job(db, current_user.id, data)
+
+
+@router.put("/scheduled-jobs/{job_id}", response_model=ScheduledJobOut)
+def update_scheduled_job(job_id: int, data: ScheduledJobUpdate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return service.update_scheduled_job(db, job_id, current_user.id, data)
+
+
+@router.delete("/scheduled-jobs/{job_id}")
+def delete_scheduled_job(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return service.delete_scheduled_job(db, job_id, current_user.id)

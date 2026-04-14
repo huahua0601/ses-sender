@@ -57,3 +57,32 @@ class UnsubscribeRecord(Base):
     source_email = Column(String(255), index=True)               # 发送者邮箱
     reason = Column(String(32), default="one-click")             # one-click / manual / complaint
     unsubscribed_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ScheduledJob(Base):
+    """定时/周期发送任务"""
+    __tablename__ = "scheduled_jobs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, index=True)
+    template_id = Column(Integer)
+    group_id = Column(Integer)
+    template_name = Column(String(255))
+    group_name = Column(String(255))
+
+    schedule_type = Column(String(16))          # once / daily / weekly / monthly
+    scheduled_time = Column(DateTime)           # once: 精确执行时间; recurring: 首次执行时间
+    cron_hour = Column(Integer, default=9)      # 周期执行的小时 (0-23 UTC)
+    cron_minute = Column(Integer, default=0)    # 周期执行的分钟 (0-59)
+    day_of_week = Column(Integer, nullable=True)  # weekly: 0=周一 ... 6=周日
+    day_of_month = Column(Integer, nullable=True) # monthly: 1-31
+
+    status = Column(String(16), default="active")  # active / paused / completed / cancelled
+    next_run_at = Column(DateTime, index=True)
+    last_run_at = Column(DateTime, nullable=True)
+    run_count = Column(Integer, default=0)
+    last_batch_id = Column(String(64), nullable=True)
+    error_message = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

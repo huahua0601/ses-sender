@@ -13,6 +13,7 @@ class UserCreate(BaseModel):
     password: str
     email: str
     is_admin: bool = False
+    daily_send_limit: int = 1000
 
 
 class UserUpdate(BaseModel):
@@ -20,6 +21,7 @@ class UserUpdate(BaseModel):
     email: Optional[str] = None
     password: Optional[str] = None
     is_active: Optional[bool] = None
+    daily_send_limit: Optional[int] = None
 
 
 class UserOut(BaseModel):
@@ -29,6 +31,7 @@ class UserOut(BaseModel):
     email: str
     is_admin: bool
     is_active: bool
+    daily_send_limit: int = 1000
 
     class Config:
         from_attributes = True

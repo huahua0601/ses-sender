@@ -14,6 +14,7 @@ class User(Base):
     email = Column(String(255))  # 用户的发送邮箱
     is_admin = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True)
+    daily_send_limit = Column(Integer, default=1000)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     groups = relationship("ContactGroup", back_populates="owner")

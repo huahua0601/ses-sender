@@ -14,6 +14,114 @@ from domain.sending.models import SendingJob, SendingJobDetail
 from domain.sending.schemas import TestEmailRequest, SendingJobOut, SendingJobDetailOut
 
 
+def get_user_dashboard(db: Session, user_id: int) -> dict:
+    """获取用户的发送统计 Dashboard 数据"""
+    from datetime import datetime, timedelta
+    from sqlalchemy import func, case
+
+    now = datetime.utcnow()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    base = db.query(SendingJob).filter(SendingJob.user_id == user_id)
+
+    stats = base.with_entities(
+        func.count(SendingJob.id),
+        func.coalesce(func.sum(SendingJob.total_contacts), 0),
+        func.sum(case((SendingJob.status == "success", 1), else_=0)),
+        func.sum(case((SendingJob.status == "failed", 1), else_=0)),
+    ).first()
+    total_jobs, total_emails, success_jobs, failed_jobs = (
+        stats[0] or 0, int(stats[1] or 0), int(stats[2] or 0), int(stats[3] or 0)
+    )
+
+    today_sent = int(base.filter(SendingJob.created_at >= today_start).with_entities(
+        func.coalesce(func.sum(SendingJob.total_contacts), 0)
+    ).scalar())
+    month_sent = int(base.filter(SendingJob.created_at >= month_start).with_entities(
+        func.coalesce(func.sum(SendingJob.total_contacts), 0)
+    ).scalar())
+
+    user_batches = [r[0] for r in base.with_entities(SendingJob.batch_id).all()]
+    delivery = {"total": 0, "delivered": 0, "bounced": 0, "opened": 0, "clicked": 0, "complained": 0}
+    if user_batches:
+        dq = db.query(SendingJobDetail).filter(SendingJobDetail.batch_id.in_(user_batches))
+        delivery["total"] = dq.count()
+        delivery["delivered"] = dq.filter(SendingJobDetail.delivery_status == "Delivery").count()
+        delivery["bounced"] = dq.filter(SendingJobDetail.delivery_status == "Bounce").count()
+        delivery["opened"] = dq.filter(SendingJobDetail.open_count > 0).count()
+        delivery["clicked"] = dq.filter(SendingJobDetail.click_count > 0).count()
+        delivery["complained"] = dq.filter(SendingJobDetail.complaint_time.isnot(None)).count()
+
+    daily_trend = []
+    for i in range(7):
+        day = today_start - timedelta(days=6 - i)
+        next_day = day + timedelta(days=1)
+        count = int(base.filter(
+            SendingJob.created_at >= day, SendingJob.created_at < next_day
+        ).with_entities(func.coalesce(func.sum(SendingJob.total_contacts), 0)).scalar())
+        daily_trend.append({"date": day.strftime("%m-%d"), "count": count})
+
+    from domain.auth.models import User as UserModel
+    user = db.query(UserModel).filter(UserModel.id == user_id).first()
+    daily_limit = user.daily_send_limit if user and user.daily_send_limit else 1000
+
+    recent_jobs = base.order_by(SendingJob.id.desc()).limit(5).all()
+    recent = [{
+        "batch_id": j.batch_id, "template_name": j.template_name,
+        "group_name": j.group_name, "total_contacts": j.total_contacts,
+        "status": j.status, "created_at": j.created_at.isoformat() if j.created_at else None,
+    } for j in recent_jobs]
+
+    return {
+        "summary": {
+            "total_jobs": total_jobs, "total_emails": total_emails,
+            "today_sent": today_sent, "month_sent": month_sent,
+            "success_jobs": success_jobs, "failed_jobs": failed_jobs,
+            "daily_limit": daily_limit, "daily_remaining": max(0, daily_limit - today_sent),
+        },
+        "delivery": delivery,
+        "daily_trend": daily_trend,
+        "recent_jobs": recent,
+    }
+
+
+def get_user_daily_quota(db: Session, user_id: int) -> dict:
+    """获取用户当日发送配额使用情况"""
+    from datetime import datetime
+    from sqlalchemy import func
+    from domain.auth.models import User as UserModel
+
+    user = db.query(UserModel).filter(UserModel.id == user_id).first()
+    daily_limit = (user.daily_send_limit if user and user.daily_send_limit else 1000)
+    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    today_sent = db.query(func.coalesce(func.sum(SendingJob.total_contacts), 0)).filter(
+        SendingJob.user_id == user_id,
+        SendingJob.created_at >= today_start,
+    ).scalar()
+    return {
+        "daily_limit": daily_limit,
+        "today_sent": today_sent,
+        "remaining": max(0, daily_limit - today_sent),
+    }
+
+
+def get_all_users_daily_quota(db: Session) -> dict:
+    """管理员：批量获取所有用户的当日发送配额"""
+    from datetime import datetime
+    from sqlalchemy import func
+
+    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    rows = db.query(
+        SendingJob.user_id,
+        func.coalesce(func.sum(SendingJob.total_contacts), 0),
+    ).filter(
+        SendingJob.created_at >= today_start,
+    ).group_by(SendingJob.user_id).all()
+
+    return {uid: int(sent) for uid, sent in rows}
+
+
 def send_test_email(req: TestEmailRequest) -> dict:
     """管理员发送测试邮件"""
     params = {
@@ -48,6 +156,12 @@ def send_bulk_email(
     if not source_email:
         raise HTTPException(status_code=400, detail="您尚未配置发送邮箱，请联系管理员")
 
+    # 检查每日发送限额
+    quota = get_user_daily_quota(db, user_id)
+    daily_limit = quota["daily_limit"]
+    today_sent = quota["today_sent"]
+    remaining = quota["remaining"]
+
     # 获取模版信息
     tpl = db.query(EmailTemplate).filter(EmailTemplate.id == template_id, EmailTemplate.user_id == user_id).first()
     if not tpl:
@@ -63,6 +177,15 @@ def send_bulk_email(
     contacts = db.query(Contact).filter(Contact.group_id == group_id).all()
     if not contacts:
         raise HTTPException(status_code=404, detail="客群中没有联系人")
+
+    remaining = daily_limit - today_sent
+    if remaining <= 0:
+        raise HTTPException(status_code=429, detail=f"今日发送配额已用完（限额 {daily_limit} 封），请明天再试")
+    if len(contacts) > remaining:
+        raise HTTPException(
+            status_code=429,
+            detail=f"今日剩余配额 {remaining} 封（限额 {daily_limit}，已用 {today_sent}），该客群有 {len(contacts)} 个联系人，超出配额"
+        )
 
     # 生成唯一批次 ID
     batch_id = f"batch-{uuid.uuid4().hex[:12]}"
@@ -686,3 +809,205 @@ def list_email_details(
         "page_size": page_size,
         "total_pages": total_pages,
     }
+
+
+# ==================== 定时发送 ====================
+
+def _calc_next_run(schedule_type: str, scheduled_time, cron_hour: int, cron_minute: int,
+                   day_of_week=None, day_of_month=None, after=None):
+    """计算下次执行时间"""
+    from datetime import datetime, timedelta
+    now = after or datetime.utcnow()
+
+    if schedule_type == "once":
+        return scheduled_time if scheduled_time > now else None
+
+    base = now.replace(hour=cron_hour, minute=cron_minute, second=0, microsecond=0)
+
+    if schedule_type == "daily":
+        nxt = base if base > now else base + timedelta(days=1)
+        return nxt
+
+    if schedule_type == "weekly":
+        dow = day_of_week if day_of_week is not None else 0
+        diff = (dow - now.weekday()) % 7
+        nxt = base + timedelta(days=diff)
+        if nxt <= now:
+            nxt += timedelta(days=7)
+        return nxt
+
+    if schedule_type == "monthly":
+        dom = day_of_month if day_of_month else 1
+        import calendar
+        try:
+            nxt = base.replace(day=min(dom, calendar.monthrange(now.year, now.month)[1]))
+        except ValueError:
+            nxt = base.replace(day=28)
+        if nxt <= now:
+            m = now.month + 1
+            y = now.year
+            if m > 12:
+                m, y = 1, y + 1
+            try:
+                nxt = nxt.replace(year=y, month=m, day=min(dom, calendar.monthrange(y, m)[1]))
+            except ValueError:
+                nxt = nxt.replace(year=y, month=m, day=28)
+        return nxt
+
+    return None
+
+
+def create_scheduled_job(db: Session, user_id: int, data) -> "ScheduledJob":
+    from datetime import datetime
+    from domain.sending.models import ScheduledJob
+    from domain.template.models import EmailTemplate
+    from domain.audience.models import ContactGroup
+
+    tpl = db.query(EmailTemplate).filter(EmailTemplate.id == data.template_id, EmailTemplate.user_id == user_id).first()
+    if not tpl:
+        raise HTTPException(status_code=404, detail="模版不存在")
+    group = db.query(ContactGroup).filter(ContactGroup.id == data.group_id, ContactGroup.user_id == user_id).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="客群不存在")
+
+    try:
+        sched_time = datetime.fromisoformat(data.scheduled_time.replace("Z", "+00:00").replace("+00:00", ""))
+    except Exception:
+        raise HTTPException(status_code=400, detail="时间格式无效")
+
+    next_run = _calc_next_run(data.schedule_type, sched_time, data.cron_hour, data.cron_minute,
+                              data.day_of_week, data.day_of_month)
+    if not next_run:
+        raise HTTPException(status_code=400, detail="计算下次执行时间失败，请检查时间设置")
+
+    job = ScheduledJob(
+        user_id=user_id,
+        template_id=data.template_id,
+        group_id=data.group_id,
+        template_name=tpl.name,
+        group_name=group.name,
+        schedule_type=data.schedule_type,
+        scheduled_time=sched_time,
+        cron_hour=data.cron_hour,
+        cron_minute=data.cron_minute,
+        day_of_week=data.day_of_week,
+        day_of_month=data.day_of_month,
+        status="active",
+        next_run_at=next_run,
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    return job
+
+
+def update_scheduled_job(db: Session, job_id: int, user_id: int, data) -> "ScheduledJob":
+    from datetime import datetime
+    from domain.sending.models import ScheduledJob
+
+    job = db.query(ScheduledJob).filter(ScheduledJob.id == job_id, ScheduledJob.user_id == user_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    if data.status is not None:
+        job.status = data.status
+    if data.schedule_type is not None:
+        job.schedule_type = data.schedule_type
+    if data.scheduled_time is not None:
+        try:
+            job.scheduled_time = datetime.fromisoformat(data.scheduled_time.replace("Z", "+00:00").replace("+00:00", ""))
+        except Exception:
+            raise HTTPException(status_code=400, detail="时间格式无效")
+    if data.cron_hour is not None:
+        job.cron_hour = data.cron_hour
+    if data.cron_minute is not None:
+        job.cron_minute = data.cron_minute
+    if data.day_of_week is not None:
+        job.day_of_week = data.day_of_week
+    if data.day_of_month is not None:
+        job.day_of_month = data.day_of_month
+
+    if job.status == "active":
+        job.next_run_at = _calc_next_run(
+            job.schedule_type, job.scheduled_time, job.cron_hour, job.cron_minute,
+            job.day_of_week, job.day_of_month,
+        )
+
+    db.commit()
+    db.refresh(job)
+    return job
+
+
+def delete_scheduled_job(db: Session, job_id: int, user_id: int):
+    from domain.sending.models import ScheduledJob
+    job = db.query(ScheduledJob).filter(ScheduledJob.id == job_id, ScheduledJob.user_id == user_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    db.delete(job)
+    db.commit()
+    return {"message": "已删除"}
+
+
+def list_scheduled_jobs(db: Session, user_id: int) -> list:
+    from domain.sending.models import ScheduledJob
+    rows = db.query(ScheduledJob).filter(ScheduledJob.user_id == user_id).order_by(ScheduledJob.id.desc()).all()
+    return rows
+
+
+def execute_scheduled_job(job_id: int):
+    """由调度器调用：执行一个到期的定时任务"""
+    import logging
+    from datetime import datetime
+    from core.database import SessionLocal
+    from domain.sending.models import ScheduledJob
+    from domain.auth.models import User
+
+    logger = logging.getLogger("ses-sender.scheduler")
+    db = SessionLocal()
+    try:
+        job = db.query(ScheduledJob).filter(ScheduledJob.id == job_id).first()
+        if not job or job.status != "active":
+            return
+
+        user = db.query(User).filter(User.id == job.user_id).first()
+        if not user or not user.email:
+            job.error_message = "用户不存在或未配置发送邮箱"
+            db.commit()
+            return
+
+        logger.info(f"[Scheduler] 执行定时任务 #{job.id} type={job.schedule_type} user={user.username}")
+
+        try:
+            result = send_bulk_email(
+                db=db,
+                source_email=user.email,
+                template_id=job.template_id,
+                group_id=job.group_id,
+                user_id=job.user_id,
+            )
+            job.last_batch_id = result.get("batch_id")
+            job.error_message = None
+        except HTTPException as e:
+            job.error_message = e.detail
+            logger.warning(f"[Scheduler] 任务 #{job.id} 发送失败: {e.detail}")
+        except Exception as e:
+            job.error_message = str(e)
+            logger.error(f"[Scheduler] 任务 #{job.id} 异常: {e}")
+
+        job.last_run_at = datetime.utcnow()
+        job.run_count = (job.run_count or 0) + 1
+
+        if job.schedule_type == "once":
+            job.status = "completed"
+            job.next_run_at = None
+        else:
+            job.next_run_at = _calc_next_run(
+                job.schedule_type, job.scheduled_time, job.cron_hour, job.cron_minute,
+                job.day_of_week, job.day_of_month, after=datetime.utcnow(),
+            )
+
+        db.commit()
+    except Exception as e:
+        logger.error(f"[Scheduler] execute_scheduled_job 异常: {e}")
+    finally:
+        db.close()
