@@ -53,3 +53,16 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+
+  mcp:
+    build: ./mcp-server
+    container_name: ses-sender-mcp
+    ports:
+      - "8808:8808"
+    environment:
+      - SES_SENDER_URL=http://backend:8000
+      - MCP_PORT=8808
+      - MCP_API_KEY=${MCP_API_KEY:-}
+    depends_on:
+      - backend
+    restart: unless-stopped

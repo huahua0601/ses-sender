@@ -26,12 +26,16 @@ out/
 # IDE
 .idea/
 .vscode/
+.cursor/
 *.swp
 *.swo
 
 # OS
 .DS_Store
 Thumbs.db
+
+# GitHub (copilot instructions)
+.github/
 
 # Docker
 *.log

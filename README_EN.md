@@ -18,7 +18,7 @@ A bulk email management platform built on AWS SES with a separated frontend/back
 
 | Feature | Description |
 |---------|-------------|
-| User Management | Create/edit/disable users, assign dedicated sending emails, reset passwords |
+| User Management | Create/edit/disable users, assign dedicated sending emails, set daily sending quota, reset passwords |
 | Sending Identities | Verify email addresses and domains (SES Identity) |
 | Email Templates | Create/edit/delete templates (isolated per user), supports `{{name}}` variables, AI-powered optimization |
 | Test Email | Send test emails using verified identities with custom content |
@@ -27,10 +27,12 @@ A bulk email management platform built on AWS SES with a separated frontend/back
 
 | Feature | Description |
 |---------|-------------|
+| Dashboard | Personal sending stats: today/month/total volume, daily quota progress, delivery/open rates, 7-day trend chart |
 | Contact Groups | Create/edit/delete groups with search and pagination |
 | Contact Management | Bulk add contacts, Excel import/export/template download, custom JSON attributes |
 | Email Templates | Each user maintains independent templates (create/edit/delete), live HTML preview, AI-powered optimization |
-| Bulk Sending | Select template and target group, async sending with auto rate limiting, skips unsubscribed contacts |
+| Bulk Sending | Select template and target group, async sending with auto rate limiting, daily quota check, skips unsubscribed contacts |
+| Scheduled Sending | One-time scheduled send, daily/weekly/monthly recurring send, pause/resume support, auto-executed by background scheduler |
 | Sending History | View historical records with real-time progress, click to see delivery rate, open rate, and other metrics per batch |
 | Email Details | Dedicated page with search/filter for per-email delivery status, open/click tracking |
 | Unsubscribe Management | View and manage unsubscribed users, restore sending capability |
@@ -58,7 +60,7 @@ ses-sender/
 ├── setup-ses-events.sh          # One-click SNS+SQS setup script
 │
 ├── backend/
-│   ├── main.py                  # Entry point, Alembic migration + SQS polling + route registration
+│   ├── main.py                  # Entry point, Alembic migration + SQS polling + scheduler + route registration
 │   ├── alembic/                 # Database migrations
 │   │   ├── env.py
 │   │   └── versions/
@@ -73,7 +75,7 @@ ses-sender/
 │       ├── identity/            #   Sending identities: SES email/domain verification
 │       ├── template/            #   Email templates: per-user isolated CRUD + AI optimization
 │       ├── audience/            #   Audience: groups, contacts, custom attributes, Excel
-│       └── sending/             #   Sending: async bulk send, history, metrics, unsubscribe
+│       └── sending/             #   Sending: async bulk send, scheduled send, history, metrics, unsubscribe
 │
 └── frontend/
     └── app/
@@ -532,6 +534,54 @@ Contacts support custom JSON attributes for email personalization:
 - Excel export: custom attributes are expanded into separate columns
 - Use `{{attribute_name}}` in email templates (e.g., `{{company}}`, `{{city}}`)
 - Attributes are automatically replaced during email sending
+
+## Daily Sending Quota
+
+Admins can set a daily email sending limit per user (default 1000 emails/day):
+
+- Admin sets `daily_send_limit` when creating/editing users; user list shows quota usage progress bar
+- System checks daily sent count before sending; rejects with HTTP 429 if exceeded
+- User bulk send page displays quota progress bar (used/remaining/total) with adaptive colors
+- Quota resets daily at UTC midnight
+
+## Dashboard
+
+Each user's default landing page shows a personal stats dashboard:
+
+- **Stat cards**: Today's sends, monthly sends, all-time total, successful batches
+- **Quota progress bar**: Today's usage vs daily limit with adaptive colors (green/orange/red)
+- **7-day trend**: Bar chart showing daily send volume
+- **Delivery metrics**: Delivery rate, open rate, click rate, bounce rate, complaint rate (with progress bars)
+- **Recent sends**: Last 5 batch summaries
+
+## Scheduled Sending
+
+Supports one-time and recurring automatic email sending:
+
+| Type | Description |
+|------|-------------|
+| One-time | Send at a specific future date/time, auto-marks as "completed" after execution |
+| Daily | Automatically sends every day at a specified time (UTC) |
+| Weekly | Automatically sends on a specified day of the week at a specified time |
+| Monthly | Automatically sends on a specified day of the month at a specified time |
+
+**How it works**:
+- Background scheduler thread checks for due tasks every 30 seconds (`next_run_at <= now` and `status = active`)
+- Triggers `send_bulk_email()` on due tasks — respects all existing rules (quota, unsubscribe filtering, rate limiting)
+- Recurring tasks automatically calculate the next execution time after each run
+- Supports pause/resume/delete operations
+- Execution results (batch ID, errors) are recorded on the task
+
+## AI Coding Assistant Support
+
+The project includes instruction files for multiple AI coding tools:
+
+| File | Tool |
+|------|------|
+| `AGENTS.md` | Universal (Claude Code / Kiro / any AI tool) |
+| `CLAUDE.md` | Claude Code |
+| `.github/copilot-instructions.md` | GitHub Copilot |
+| `.cursor/rules/ses-sender.md` | Cursor |
 
 ## License
 
