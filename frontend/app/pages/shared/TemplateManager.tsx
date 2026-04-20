@@ -14,20 +14,36 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
   const [aiLoading,setAiLoading]=useState(false);
   const [aiResult,setAiResult]=useState<{suggestions:string[];optimized_subject:string;optimized_html:string}|null>(null);
   const [aiFeedback,setAiFeedback]=useState("");
+  const [showAiPrompt,setShowAiPrompt]=useState(false);
+  const [aiPrompt,setAiPrompt]=useState("");
+  const [aiImages,setAiImages]=useState<{url:string;name:string}[]>([]);
+
+  const uploadAiImage=async(file:File)=>{
+    const fd=new FormData();fd.append("file",file);
+    try{
+      const r=await fetch(`${API}/upload/image`,{method:"POST",headers:{"Authorization":`Bearer ${token}`},body:fd});
+      if(!r.ok)return;
+      const d=await r.json();
+      setAiImages(prev=>[...prev,{url:d.url,name:file.name}]);
+    }catch{}
+  };
 
   const aiOptimize=async(feedback?:string)=>{
     const useOriginal = !feedback;
     const subj = useOriginal ? f.subject : (aiResult?.optimized_subject || f.subject);
     const body = useOriginal ? f.html_body : (aiResult?.optimized_html || f.html_body);
     if(!body.trim())return toast("warning","请先编写邮件内容");
-    setAiLoading(true);
+    setAiLoading(true);setShowAiPrompt(false);
     if(useOriginal) setAiResult(null);
     try{
       const payload:any = {subject:subj, html_body:body};
-      if(feedback?.trim()) payload.user_feedback = feedback.trim();
+      const prompt = feedback?.trim() || aiPrompt.trim();
+      if(prompt) payload.user_feedback = prompt;
+      const imgUrls = aiImages.map(i=>i.url);
+      if(imgUrls.length>0) payload.images = imgUrls;
       const r=await fetch(`${API}/ai/optimize-template`,{method:"POST",headers:authH(token),body:JSON.stringify(payload)});
       const d=await r.json();
-      if(r.ok){setAiResult(d);setShowAi(true);setAiFeedback("");}
+      if(r.ok){setAiResult(d);setShowAi(true);setAiFeedback("");setAiPrompt("");setAiImages([]);}
       else toast("error","AI 优化失败",d.detail||"请检查 Bedrock 配置");
     }catch(e:any){toast("error","AI 优化失败",e?.message||"网络错误，请重试");}
     finally{setAiLoading(false);}
@@ -160,9 +176,42 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
         <h2 className="text-lg font-semibold text-gray-800">{isCreate?"新建邮件模版":`编辑模版 - ${f.name}`}</h2>
       </div>
       <div className="flex gap-2">
-        <Btn variant="outline" onClick={()=>aiOptimize()} disabled={aiLoading} className="border-purple-300 text-purple-600 hover:bg-purple-50">
-          {aiLoading?"AI 分析中...":"✨ AI 优化"}
-        </Btn>
+        <div className="relative">
+          <Btn variant="outline" onClick={()=>{if(aiLoading)return;setShowAiPrompt(!showAiPrompt);}} disabled={aiLoading} className="border-purple-300 text-purple-600 hover:bg-purple-50">
+            {aiLoading?"AI 分析中...":"✨ AI 优化"}
+          </Btn>
+          {showAiPrompt&&!aiLoading&&<div className="absolute right-0 top-full mt-2 w-96 bg-white border border-purple-200 rounded-xl shadow-xl p-4 z-50"
+            onDragOver={e=>{e.preventDefault();e.stopPropagation();}}
+            onDrop={e=>{e.preventDefault();e.stopPropagation();const files=e.dataTransfer?.files;if(files)for(let i=0;i<files.length;i++){if(files[i].type.startsWith("image/"))uploadAiImage(files[i]);}}}
+          >
+            <p className="text-sm font-medium text-gray-700 mb-2">优化提示词 <span className="text-gray-400 font-normal">（可选）</span></p>
+            <textarea
+              value={aiPrompt}
+              onChange={e=>setAiPrompt(e.target.value)}
+              onPaste={e=>{const items=e.clipboardData?.items;if(items)for(let i=0;i<items.length;i++){if(items[i].type.startsWith("image/")){e.preventDefault();const file=items[i].getAsFile();if(file)uploadAiImage(file);return;}}}}
+              placeholder="留空则按邮件最佳实践自动优化。&#10;也可输入具体要求，如：&#10;• 语气更正式&#10;• 参考图片中的设计风格&#10;• 适配移动端"
+              className="w-full border border-gray-200 rounded-lg p-3 text-sm resize-none outline-none focus:border-purple-400 focus:ring-1 focus:ring-purple-300"
+              rows={3}
+              autoFocus
+            />
+            {aiImages.length>0&&(
+              <div className="flex flex-wrap gap-2 mt-2">
+                {aiImages.map((img,i)=>(
+                  <div key={i} className="relative group">
+                    <img src={`${API}${img.url}`} alt={img.name} className="w-16 h-16 object-cover rounded-lg border border-gray-200"/>
+                    <button onClick={()=>setAiImages(prev=>prev.filter((_,j)=>j!==i))}
+                      className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white rounded-full text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition">x</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <p className="text-xs text-gray-400 mt-2">支持粘贴 (Ctrl+V) 或拖拽图片作为参考</p>
+            <div className="flex justify-end gap-2 mt-2">
+              <Btn variant="outline" size="sm" onClick={()=>{setShowAiPrompt(false);setAiImages([]);}}>取消</Btn>
+              <Btn size="sm" onClick={()=>aiOptimize()} className="bg-purple-600 hover:bg-purple-700 text-white">开始优化</Btn>
+            </div>
+          </div>}
+        </div>
         <Btn variant="outline" onClick={goBack}>取消</Btn>
         {isCreate ? <Btn variant="success" onClick={create}>保存模版</Btn> : <Btn onClick={update}>保存修改</Btn>}
       </div>

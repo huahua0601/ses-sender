@@ -15,7 +15,7 @@ router = APIRouter(tags=["邮件模版管理"])
 @router.post("/ai/optimize-template")
 def optimize_template(req: OptimizeRequest, current_user: User = Depends(get_current_user)):
     """调用 Bedrock AI 优化邮件模板"""
-    return service.optimize_template_with_ai(req.subject, req.html_body, req.user_feedback)
+    return service.optimize_template_with_ai(req.subject, req.html_body, req.user_feedback, req.images)
 
 
 # ========== 通用：按用户隔离的模版管理 ==========

@@ -29,3 +29,4 @@ class OptimizeRequest(BaseModel):
     subject: str
     html_body: str
     user_feedback: Optional[str] = None
+    images: Optional[list[str]] = None

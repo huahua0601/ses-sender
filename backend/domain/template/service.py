@@ -192,17 +192,32 @@ def _parse_ai_json(text: str) -> dict:
     raise HTTPException(status_code=500, detail="AI 返回格式异常，请重试")
 
 
-def optimize_template_with_ai(subject: str, html_body: str, user_feedback: str = None) -> dict:
+def optimize_template_with_ai(subject: str, html_body: str, user_feedback: str = None, images: list = None) -> dict:
     """调用 AWS Bedrock 优化邮件模板"""
     import json
     import logging
     import boto3
     from core.config import BEDROCK_MODEL_ID, BEDROCK_REGION
+    from core.database import SessionLocal
 
     logger = logging.getLogger("ses-sender.ai")
 
-    if not BEDROCK_MODEL_ID:
-        raise HTTPException(status_code=400, detail="未配置 BEDROCK_MODEL_ID")
+    db_cfg = {}
+    try:
+        from domain.settings.service import get_bedrock_config
+        _db = SessionLocal()
+        try:
+            db_cfg = get_bedrock_config(_db)
+        finally:
+            _db.close()
+    except Exception:
+        pass
+
+    model_id = db_cfg.get("model_id") or BEDROCK_MODEL_ID
+    region = db_cfg.get("region") or BEDROCK_REGION
+
+    if not model_id:
+        raise HTTPException(status_code=400, detail="未配置 AI 模型，请在系统设置中配置 Bedrock")
 
     base_instructions = """You are an expert email marketing consultant specializing in AWS SES best practices and email deliverability.
 
@@ -248,25 +263,47 @@ Important:
 - Do NOT wrap in markdown code fences
 - Make sure all strings in JSON are properly escaped (especially quotes and newlines in HTML)"""
 
+    image_data = _load_images(images, logger) if images else []
+
     try:
-        client = boto3.client("bedrock-runtime", region_name=BEDROCK_REGION)
+        api_key = db_cfg.get("api_key")
+        auth_mode = db_cfg.get("auth_mode", "iam_role")
 
-        body = json.dumps({
-            "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": 8192,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.3,
-        })
+        if auth_mode == "api_key" and api_key:
+            ai_text = _invoke_bedrock_api_key(model_id, region, api_key, prompt, logger, image_data)
+        else:
+            client_kwargs = {"region_name": region}
+            if auth_mode == "ak_sk":
+                ak, sk = db_cfg.get("access_key"), db_cfg.get("secret_key")
+                if ak and sk:
+                    client_kwargs["aws_access_key_id"] = ak
+                    client_kwargs["aws_secret_access_key"] = sk
+            client = boto3.client("bedrock-runtime", **client_kwargs)
 
-        response = client.invoke_model(
-            modelId=BEDROCK_MODEL_ID,
-            contentType="application/json",
-            accept="application/json",
-            body=body,
-        )
+            content = []
+            for img in image_data:
+                content.append({
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": img["media_type"], "data": img["data"]},
+                })
+            content.append({"type": "text", "text": prompt})
 
-        result = json.loads(response["body"].read())
-        ai_text = result.get("content", [{}])[0].get("text", "{}")
+            body = json.dumps({
+                "anthropic_version": "bedrock-2023-05-31",
+                "max_tokens": 8192,
+                "messages": [{"role": "user", "content": content}],
+                "temperature": 0.3,
+            })
+
+            response = client.invoke_model(
+                modelId=model_id,
+                contentType="application/json",
+                accept="application/json",
+                body=body,
+            )
+            result = json.loads(response["body"].read())
+            ai_text = result.get("content", [{}])[0].get("text", "{}")
+
         logger.debug(f"[AI Optimize] Raw response length: {len(ai_text)}")
         logger.debug(f"[AI Optimize] Raw response first 500 chars: {ai_text[:500]}")
         logger.debug(f"[AI Optimize] Raw response last 500 chars: {ai_text[-500:]}")
@@ -279,8 +316,98 @@ Important:
             "optimized_html": ai_json.get("optimized_html", html_body),
         }
 
-    except client.exceptions.AccessDeniedException:
-        raise HTTPException(status_code=403, detail="无权访问 Bedrock，请检查 IAM 权限（需要 bedrock:InvokeModel）")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"[AI Optimize] Bedrock 调用失败: {e}")
         raise HTTPException(status_code=500, detail=f"AI 优化失败: {str(e)}")
+
+
+def _load_images(image_urls: list, logger) -> list:
+    """将图片 URL（本地路径或 /uploads/...）加载为 base64"""
+    import base64
+    import os
+
+    UPLOAD_BASE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "uploads")
+    MIME_MAP = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp"}
+    FORMAT_MAP = {"image/png": "png", "image/jpeg": "jpeg", "image/gif": "gif", "image/webp": "webp"}
+    results = []
+
+    for url in (image_urls or []):
+        try:
+            if url.startswith("/uploads/"):
+                filepath = os.path.join(UPLOAD_BASE, url.replace("/uploads/", ""))
+            elif url.startswith("http"):
+                import urllib.request
+                import tempfile
+                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".img")
+                urllib.request.urlretrieve(url, tmp.name)
+                filepath = tmp.name
+            else:
+                continue
+
+            if not os.path.isfile(filepath):
+                logger.warning(f"[AI] Image not found: {filepath}")
+                continue
+
+            ext = os.path.splitext(filepath)[1].lower()
+            media_type = MIME_MAP.get(ext, "image/png")
+            fmt = FORMAT_MAP.get(media_type, "png")
+
+            with open(filepath, "rb") as fp:
+                raw = fp.read()
+            if len(raw) > 5 * 1024 * 1024:
+                logger.warning(f"[AI] Image too large: {len(raw)} bytes, skipping")
+                continue
+
+            results.append({
+                "data": base64.b64encode(raw).decode(),
+                "media_type": media_type,
+                "format": fmt,
+            })
+        except Exception as e:
+            logger.warning(f"[AI] Failed to load image {url}: {e}")
+
+    return results
+
+
+def _invoke_bedrock_api_key(model_id: str, region: str, api_key: str, prompt: str, logger, image_data: list = None) -> str:
+    """通过 Bedrock API Key (Bearer Token) + Converse API 调用模型"""
+    import json
+    import urllib.request
+    import urllib.error
+
+    url = f"https://bedrock-runtime.{region}.amazonaws.com/model/{model_id}/converse"
+
+    content = []
+    for img in (image_data or []):
+        import base64
+        content.append({
+            "image": {
+                "format": img["format"],
+                "source": {"bytes": img["data"]},
+            }
+        })
+    content.append({"text": prompt})
+
+    payload = json.dumps({
+        "messages": [{"role": "user", "content": content}],
+        "inferenceConfig": {"maxTokens": 8192, "temperature": 0.3},
+    }).encode()
+
+    req = urllib.request.Request(url, data=payload, method="POST")
+    req.add_header("Content-Type", "application/json")
+    req.add_header("Authorization", f"Bearer {api_key}")
+
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            data = json.loads(resp.read())
+            text = ""
+            for block in data.get("output", {}).get("message", {}).get("content", []):
+                if "text" in block:
+                    text += block["text"]
+            return text or "{}"
+    except urllib.error.HTTPError as e:
+        body = e.read().decode() if e.fp else ""
+        logger.error(f"[AI Optimize] Bedrock API Key 调用失败: HTTP {e.code} {body[:300]}")
+        raise HTTPException(status_code=502, detail=f"Bedrock API 调用失败: HTTP {e.code}")
