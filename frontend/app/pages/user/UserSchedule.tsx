@@ -8,13 +8,47 @@ const STATUS_MAP:{[k:string]:{label:string;color:string}}={
   active:{label:"运行中",color:"green"},paused:{label:"已暂停",color:"gray"},
   completed:{label:"已完成",color:"blue"},cancelled:{label:"已取消",color:"red"},
 };
+const TIMEZONES=[
+  {value:"UTC",label:"UTC (协调世界时)",offset:0},
+  {value:"Asia/Shanghai",label:"Asia/Shanghai (北京时间 UTC+8)",offset:8},
+  {value:"Asia/Tokyo",label:"Asia/Tokyo (东京 UTC+9)",offset:9},
+  {value:"Asia/Singapore",label:"Asia/Singapore (新加坡 UTC+8)",offset:8},
+  {value:"Asia/Kolkata",label:"Asia/Kolkata (印度 UTC+5:30)",offset:5.5},
+  {value:"Asia/Dubai",label:"Asia/Dubai (迪拜 UTC+4)",offset:4},
+  {value:"Europe/London",label:"Europe/London (伦敦 UTC+0/+1)",offset:0},
+  {value:"Europe/Berlin",label:"Europe/Berlin (柏林 UTC+1/+2)",offset:1},
+  {value:"Europe/Paris",label:"Europe/Paris (巴黎 UTC+1/+2)",offset:1},
+  {value:"America/New_York",label:"America/New_York (纽约 UTC-5/-4)",offset:-5},
+  {value:"America/Chicago",label:"America/Chicago (芝加哥 UTC-6/-5)",offset:-6},
+  {value:"America/Denver",label:"America/Denver (丹佛 UTC-7/-6)",offset:-7},
+  {value:"America/Los_Angeles",label:"America/Los_Angeles (洛杉矶 UTC-8/-7)",offset:-8},
+  {value:"America/Sao_Paulo",label:"America/Sao_Paulo (圣保罗 UTC-3)",offset:-3},
+  {value:"Australia/Sydney",label:"Australia/Sydney (悉尼 UTC+10/+11)",offset:10},
+  {value:"Pacific/Auckland",label:"Pacific/Auckland (奥克兰 UTC+12/+13)",offset:12},
+];
+
+function localToUtcHour(hour:number, minute:number, tz:string):{h:number;m:number}{
+  const tzInfo = TIMEZONES.find(t=>t.value===tz);
+  if(!tzInfo||tz==="UTC") return {h:hour,m:minute};
+  const totalMin = hour*60 + minute - tzInfo.offset*60;
+  let utcMin = ((totalMin % 1440) + 1440) % 1440;
+  return {h:Math.floor(utcMin/60), m:utcMin%60};
+}
+
+function guessTimezone():string{
+  try{
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if(TIMEZONES.find(t=>t.value===tz)) return tz;
+  }catch{}
+  return "UTC";
+}
 
 export default function UserSchedule() {
   const {token}=useAuth(); const {toast}=useToast(); const {confirm:cfm}=useConfirm();
   const [jobs,setJobs]=useState<any[]>([]);
   const [ts,setTs]=useState<any[]>([]); const [gs,setGs]=useState<any[]>([]);
   const [show,setShow]=useState(false);
-  const [f,setF]=useState({template_id:"",group_id:"",schedule_type:"once",scheduled_time:"",cron_hour:9,cron_minute:0,day_of_week:0,day_of_month:1});
+  const [f,setF]=useState({template_id:"",group_id:"",schedule_type:"once",scheduled_time:"",cron_hour:9,cron_minute:0,day_of_week:0,day_of_month:1,timezone:guessTimezone()});
 
   const load=async()=>{
     const r=await fetch(`${API}/scheduled-jobs`,{headers:authH(token)});
@@ -32,7 +66,7 @@ export default function UserSchedule() {
   },[]);
 
   const openCreate=()=>{
-    setF({template_id:"",group_id:"",schedule_type:"once",scheduled_time:"",cron_hour:9,cron_minute:0,day_of_week:0,day_of_month:1});
+    setF({template_id:"",group_id:"",schedule_type:"once",scheduled_time:"",cron_hour:9,cron_minute:0,day_of_week:0,day_of_month:1,timezone:guessTimezone()});
     setShow(true);
   };
 
@@ -43,13 +77,25 @@ export default function UserSchedule() {
     const payload:any={
       template_id:parseInt(f.template_id),group_id:parseInt(f.group_id),
       schedule_type:f.schedule_type,
-      cron_hour:f.cron_hour,cron_minute:f.cron_minute,
     };
+
     if(f.schedule_type==="once"){
-      payload.scheduled_time=new Date(f.scheduled_time).toISOString();
+      const [datePart,timePart] = f.scheduled_time.split("T");
+      if(!datePart||!timePart) return toast("warning","请选择有效的发送时间");
+      const [yyyy,mm,dd] = datePart.split("-").map(Number);
+      const [hh,mi] = timePart.split(":").map(Number);
+      const tzInfo = TIMEZONES.find(t=>t.value===f.timezone);
+      const offsetMin = (tzInfo?.offset||0)*60;
+      const d = new Date(Date.UTC(yyyy,mm-1,dd,hh,mi) - offsetMin*60000);
+      payload.scheduled_time=d.toISOString();
+      payload.cron_hour=d.getUTCHours();
+      payload.cron_minute=d.getUTCMinutes();
     } else {
+      const utc = localToUtcHour(f.cron_hour, f.cron_minute, f.timezone);
+      payload.cron_hour=utc.h;
+      payload.cron_minute=utc.m;
       const now=new Date();
-      now.setUTCHours(f.cron_hour,f.cron_minute,0,0);
+      now.setUTCHours(utc.h,utc.m,0,0);
       payload.scheduled_time=now.toISOString();
     }
     if(f.schedule_type==="weekly") payload.day_of_week=f.day_of_week;
@@ -76,15 +122,21 @@ export default function UserSchedule() {
   const descSchedule=(j:any)=>{
     const hh=String(j.cron_hour).padStart(2,"0");
     const mm=String(j.cron_minute).padStart(2,"0");
-    if(j.schedule_type==="once") return `${fmtTime(j.scheduled_time)}`;
-    if(j.schedule_type==="daily") return `每天 ${hh}:${mm} (UTC)`;
-    if(j.schedule_type==="weekly") return `每${DAYS[j.day_of_week||0]} ${hh}:${mm} (UTC)`;
-    if(j.schedule_type==="monthly") return `每月 ${j.day_of_month||1}日 ${hh}:${mm} (UTC)`;
+    if(j.schedule_type==="once") return fmtTime(j.scheduled_time);
+    if(j.schedule_type==="daily") return `每天 ${hh}:${mm} UTC`;
+    if(j.schedule_type==="weekly") return `每${DAYS[j.day_of_week||0]} ${hh}:${mm} UTC`;
+    if(j.schedule_type==="monthly") return `每月 ${j.day_of_month||1}日 ${hh}:${mm} UTC`;
     return "-";
   };
 
+  const utcPreview=()=>{
+    if(f.schedule_type==="once") return null;
+    const utc=localToUtcHour(f.cron_hour,f.cron_minute,f.timezone);
+    return `= UTC ${String(utc.h).padStart(2,"0")}:${String(utc.m).padStart(2,"0")}`;
+  };
+
   return <>
-    <Modal open={show} onClose={()=>setShow(false)} title="创建定时发送任务" width={540}>
+    <Modal open={show} onClose={()=>setShow(false)} title="创建定时发送任务" width={560}>
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -113,22 +165,31 @@ export default function UserSchedule() {
           </div>
         </div>
 
+        <div>
+          <label className="text-sm font-medium text-gray-700 mb-1.5 block">时区</label>
+          <Select value={f.timezone} onChange={(e:any)=>setF({...f,timezone:e.target.value})}>
+            {TIMEZONES.map(tz=><option key={tz.value} value={tz.value}>{tz.label}</option>)}
+          </Select>
+        </div>
+
         {f.schedule_type==="once"&&(
           <div>
             <label className="text-sm font-medium text-gray-700 mb-1.5 block">发送时间</label>
             <Input type="datetime-local" value={f.scheduled_time} onChange={(e:any)=>setF({...f,scheduled_time:e.target.value})}/>
+            <p className="text-xs text-gray-400 mt-1">按所选时区 ({f.timezone}) 的本地时间</p>
           </div>
         )}
 
         {f.schedule_type!=="once"&&(
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-sm font-medium text-gray-700 mb-1.5 block">执行时间 (UTC)</label>
+              <label className="text-sm font-medium text-gray-700 mb-1.5 block">执行时间</label>
               <div className="flex gap-2 items-center">
                 <Input type="number" min={0} max={23} value={f.cron_hour} onChange={(e:any)=>setF({...f,cron_hour:parseInt(e.target.value)||0})} className="w-20"/>
-                <span className="text-gray-400">:</span>
+                <span className="text-gray-400 font-bold">:</span>
                 <Input type="number" min={0} max={59} value={f.cron_minute} onChange={(e:any)=>setF({...f,cron_minute:parseInt(e.target.value)||0})} className="w-20"/>
               </div>
+              {utcPreview()&&<p className="text-xs text-indigo-500 mt-1">{utcPreview()}</p>}
             </div>
             {f.schedule_type==="weekly"&&(
               <div>
