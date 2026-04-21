@@ -409,6 +409,52 @@ The system supports Gmail/Yahoo one-click unsubscribe requirements (RFC 8058):
 
 **Setup**: Set `UNSUBSCRIBE_BASE_URL` in `.env` to your public-facing backend URL (e.g., `https://api.example.com`).
 
+## Upgrade Guide
+
+### Upgrade to Latest Version
+
+```bash
+# 1. Pull latest code
+cd ses-sender
+git pull origin main
+
+# 2. Check for new environment variables (compare with .env.example)
+diff <(sort .env) <(sort .env.example)
+# Add any new variables to .env as needed
+
+# 3. Rebuild and restart (database migrations run automatically)
+docker-compose down
+docker-compose up -d --build
+
+# 4. Verify services are running
+docker-compose ps
+docker-compose logs --tail=10 backend | grep Alembic
+```
+
+### Upgrade Notes
+
+| Item | Details |
+|------|---------|
+| Database migration | Alembic auto-runs `upgrade head` on backend startup |
+| MySQL data | Persisted in `./data/mysql/`, preserved during upgrades |
+| Uploaded files | Persisted in `./data/uploads/`, preserved during upgrades |
+| Environment variables | New versions may add variables — compare with `.env.example` before upgrading |
+| Restart method | Must use `docker-compose down && up -d --build`, NOT `restart` |
+
+### Rollback
+
+```bash
+# View version history
+git log --oneline -10
+
+# Roll back to a specific version
+git checkout <commit-hash>
+docker-compose down && docker-compose up -d --build
+
+# Roll back database migration if needed
+docker exec ses-sender-backend alembic downgrade -1
+```
+
 ## Database Migrations
 
 The project uses Alembic for database versioning. Migrations run automatically on service startup.

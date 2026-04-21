@@ -476,6 +476,52 @@ CloudWatch 指标从 SES 事件产生到可查询，通常需要 **5-15 分钟**
 | SES 返回 Success 但邮件未送达 | Tag 值包含中文等非 ASCII 字符 | 系统已自动过滤，确保使用最新版本 |
 | 环境变量修改后不生效 | `docker-compose restart` 不读取新环境变量 | 使用 `docker-compose down && docker-compose up -d` |
 
+## 升级指南
+
+### 升级到最新版本
+
+```bash
+# 1. 拉取最新代码
+cd ses-sender
+git pull origin main
+
+# 2. 检查是否有新增环境变量（对比 .env.example）
+diff <(sort .env) <(sort .env.example)
+# 如有新增变量，按需添加到 .env
+
+# 3. 重建并重启（数据库迁移自动执行）
+docker-compose down
+docker-compose up -d --build
+
+# 4. 确认服务正常
+docker-compose ps
+docker-compose logs --tail=10 backend | grep Alembic
+```
+
+### 升级说明
+
+| 项目 | 说明 |
+|------|------|
+| 数据库迁移 | 后端启动时 Alembic 自动执行 `upgrade head`，无需手动操作 |
+| MySQL 数据 | 持久化在 `./data/mysql/`，升级不丢失 |
+| 上传文件 | 持久化在 `./data/uploads/`，升级不丢失 |
+| 环境变量 | 新版本可能新增变量，升级前对比 `.env.example` |
+| 重启方式 | 必须 `docker-compose down && up -d --build`，不能用 `restart` |
+
+### 回滚
+
+```bash
+# 查看历史版本
+git log --oneline -10
+
+# 回到指定版本
+git checkout <commit-hash>
+docker-compose down && docker-compose up -d --build
+
+# 如需回滚数据库迁移
+docker exec ses-sender-backend alembic downgrade -1
+```
+
 ## 数据库迁移
 
 本项目使用 Alembic 管理数据库版本。服务启动时会自动检查并执行迁移。

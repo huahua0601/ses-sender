@@ -37,7 +37,10 @@ docker-compose up -d
 {
   "mcpServers": {
     "ses-sender": {
-      "url": "http://your-server:8808/mcp"
+      "url": "http://your-server:8808/mcp",
+      "headers": {
+        "x-api-key": "sk-ses-mcp-2026"
+      }
     }
   }
 }
@@ -45,7 +48,7 @@ docker-compose up -d
 
 **Claude Code**：
 ```bash
-claude mcp add --transport http ses-sender http://your-server:8808/mcp
+claude mcp add --transport http ses-sender http://your-server:8808/mcp --header "x-api-key: sk-ses-mcp-2026"
 ```
 
 **Cursor**（`.cursor/mcp.json`）：
@@ -53,10 +56,54 @@ claude mcp add --transport http ses-sender http://your-server:8808/mcp
 {
   "mcpServers": {
     "ses-sender": {
-      "url": "http://your-server:8808/mcp"
+      "url": "http://your-server:8808/mcp",
+      "headers": {
+        "x-api-key": "sk-ses-mcp-2026"
+      }
     }
   }
 }
+```
+
+**Kiro**（`.kiro/settings/mcp.json`）：
+```json
+{
+  "mcpServers": {
+    "ses-sender": {
+      "url": "http://your-server:8808/mcp",
+      "headers": {
+        "x-api-key": "sk-ses-mcp-2026"
+      }
+    }
+  }
+}
+```
+
+> 将 `your-server` 替换为实际服务器 IP 或域名，`sk-ses-mcp-2026` 替换为 `.env` 中配置的 `MCP_API_KEY` 值。
+
+### API Key 认证
+
+MCP Server 通过 `MCP_API_KEY` 环境变量启用访问控制：
+
+```bash
+# .env 文件
+MCP_API_KEY=sk-ses-mcp-2026
+```
+
+| 配置 | 行为 |
+|------|------|
+| `MCP_API_KEY` 有值 | 所有 `/mcp` 请求必须携带 API Key |
+| `MCP_API_KEY` 为空 | 开放访问，无需认证（仅限开发环境） |
+
+支持三种传递 Key 的方式：
+
+| 方式 | 示例 |
+|------|------|
+| `x-api-key` 头 | `x-api-key: sk-ses-mcp-2026` |
+| `Authorization` 头 | `Authorization: Bearer sk-ses-mcp-2026` |
+| URL 参数 | `?key=sk-ses-mcp-2026` |
+
+`/health` 端点无需认证，可用于监控检查。
 ```
 
 ## 支持的 AI 工具

@@ -49,6 +49,8 @@ const ACTIONS = {
   scheduled_toggle:   { method: "PUT",  path: "/scheduled-jobs/{job_id}" },
   scheduled_delete:   { method: "DELETE",path:"/scheduled-jobs/{job_id}" },
   unsubscribes:       { method: "GET",  path: "/unsubscribe-list" },
+  group_create:       { method: "POST", path: "/groups" },
+  group_delete:       { method: "DELETE",path:"/groups/{group_id}" },
 };
 
 function registerTools(server) {
