@@ -45,7 +45,11 @@ export default function AdminSettings() {
   const test=async()=>{
     setTesting(true);setTestResult(null);
     try{
-      const r=await fetch(`${API}/admin/settings/test-bedrock`,{method:"POST",headers:authH(token)});
+      const body:any={bedrock_auth_mode:f.bedrock_auth_mode,bedrock_model_id:f.bedrock_model_id,bedrock_region:f.bedrock_region};
+      if(f.bedrock_access_key) body.bedrock_access_key=f.bedrock_access_key;
+      if(f.bedrock_secret_key) body.bedrock_secret_key=f.bedrock_secret_key;
+      if(f.bedrock_api_key) body.bedrock_api_key=f.bedrock_api_key;
+      const r=await fetch(`${API}/admin/settings/test-bedrock`,{method:"POST",headers:authH(token),body:JSON.stringify(body)});
       const d=await r.json(); setTestResult(d);
       if(d.success) toast("success","连通性测试通过"); else toast("error","测试失败",d.error);
     }catch{toast("error","网络错误");}

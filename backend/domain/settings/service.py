@@ -68,9 +68,24 @@ def get_bedrock_config(db: Session) -> dict:
     }
 
 
-def test_bedrock_connection(db: Session) -> dict:
-    """测试 Bedrock 连通性"""
+def test_bedrock_connection(db: Session, override: dict = None) -> dict:
+    """测试 Bedrock 连通性，优先使用传入的参数（未保存的表单值）"""
     cfg = get_bedrock_config(db)
+
+    if override:
+        if override.get("bedrock_auth_mode"):
+            cfg["auth_mode"] = override["bedrock_auth_mode"]
+        if override.get("bedrock_model_id"):
+            cfg["model_id"] = override["bedrock_model_id"]
+        if override.get("bedrock_region"):
+            cfg["region"] = override["bedrock_region"]
+        if override.get("bedrock_access_key"):
+            cfg["access_key"] = override["bedrock_access_key"]
+        if override.get("bedrock_secret_key"):
+            cfg["secret_key"] = override["bedrock_secret_key"]
+        if override.get("bedrock_api_key"):
+            cfg["api_key"] = override["bedrock_api_key"]
+
     mode = cfg["auth_mode"]
 
     if mode == "api_key":

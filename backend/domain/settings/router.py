@@ -20,5 +20,5 @@ def save_settings(data: dict, admin: User = Depends(require_admin), db: Session 
 
 
 @router.post("/admin/settings/test-bedrock")
-def test_bedrock(admin: User = Depends(require_admin), db: Session = Depends(get_db)):
-    return service.test_bedrock_connection(db)
+def test_bedrock(data: dict = None, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    return service.test_bedrock_connection(db, data)
