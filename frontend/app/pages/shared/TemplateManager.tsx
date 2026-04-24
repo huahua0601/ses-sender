@@ -8,7 +8,66 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
   const [mode,setMode]=useState<"list"|"create"|"edit">("list");
   const [f,setF]=useState({name:"",subject:"",html_body:""});
   const [editId,setEditId]=useState<number|null>(null);
-  const [previewTab,setPreviewTab]=useState<"code"|"preview"|"split">("split");
+  const [previewTab,setPreviewTab]=useState<"split">("split");
+  const visualHtmlRef = useRef<string>("");
+  const splitIframeRef = useRef<HTMLIFrameElement>(null);
+  const splitInitRef = useRef(false);
+  const splitSyncingRef = useRef(false);
+  const splitHtmlRef = useRef<string>("");
+
+  const syncFromSplitEditor = () => {
+    const iframe = splitIframeRef.current;
+    if (!iframe) return;
+    try {
+      const doc = iframe.contentDocument;
+      if (doc?.body) {
+        splitSyncingRef.current = true;
+        setF(prev => ({ ...prev, html_body: doc.body.innerHTML }));
+        setTimeout(() => { splitSyncingRef.current = false; }, 50);
+      }
+    } catch {}
+  };
+
+  useEffect(() => {
+    splitInitRef.current = false;
+  }, [previewTab]);
+
+  const initSplitIframe = (iframe: HTMLIFrameElement | null) => {
+    if (!iframe) return;
+    splitIframeRef.current = iframe;
+    if (splitInitRef.current) return;
+    const doInit = () => {
+      if (splitInitRef.current) return;
+      try {
+        const doc = iframe.contentDocument || iframe.contentWindow?.document;
+        if (!doc) return;
+        doc.open();
+        doc.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{margin:0;padding:20px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;outline:none;min-height:500px;cursor:text;}</style></head><body>${f.html_body}</body></html>`);
+        doc.close();
+        doc.designMode = "on";
+        splitHtmlRef.current = f.html_body;
+        doc.body.addEventListener("blur", syncFromSplitEditor);
+        splitInitRef.current = true;
+      } catch {}
+    };
+    iframe.addEventListener("load", doInit, { once: true });
+    setTimeout(doInit, 100);
+  };
+
+  useEffect(() => {
+    if (previewTab !== "split" || !splitInitRef.current || splitSyncingRef.current) return;
+    const iframe = splitIframeRef.current;
+    if (!iframe) return;
+    try {
+      const doc = iframe.contentDocument;
+      if (doc?.body && doc.body.innerHTML !== f.html_body) {
+        const sel = doc.getSelection();
+        const hadFocus = doc.hasFocus();
+        doc.body.innerHTML = f.html_body;
+        if (hadFocus && sel) { try { sel.selectAllChildren(doc.body); sel.collapseToEnd(); } catch {} }
+      }
+    } catch {}
+  }, [f.html_body]);
 
   // AI 优化
   const [aiLoading,setAiLoading]=useState(false);
@@ -57,17 +116,19 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
   const load=async()=>{const d=await(await fetch(`${API}${apiPrefix}`,{headers:authH(token)})).json();setList(Array.isArray(d)?d:[]);}; useEffect(()=>{load();},[]);
 
   const create=async()=>{
+    syncFromSplitEditor();
     if(!f.name||!f.subject||!f.html_body)return toast("warning","请填写完整");
     const r=await fetch(`${API}${apiPrefix}`,{method:"POST",headers:authH(token),body:JSON.stringify(f)});
     if(r.ok){toast("success","模版创建成功");setMode("list");load();}
     else{const e=await r.json();toast("error","失败",e.detail);}
   };
 
-  const openEdit=(t:any)=>{setEditId(t.id);setF({name:t.name,subject:t.subject,html_body:t.html_body});setMode("edit");setPreviewTab("split");setAiResult(null);};
-  const openCreate=()=>{setF({name:"",subject:"",html_body:""});setMode("create");setPreviewTab("split");setAiResult(null);};
+  const openEdit=(t:any)=>{setEditId(t.id);setF({name:t.name,subject:t.subject,html_body:t.html_body});setMode("edit");setAiResult(null);splitInitRef.current=false;};
+  const openCreate=()=>{setF({name:"",subject:"",html_body:""});setMode("create");setAiResult(null);splitInitRef.current=false;};
   const goBack=()=>{setMode("list");setAiResult(null);};
 
   const update=async()=>{
+    syncFromSplitEditor();
     if(!f.subject||!f.html_body)return toast("warning","请填写完整");
     const r=await fetch(`${API}${apiPrefix}/${editId}`,{method:"PUT",headers:authH(token),body:JSON.stringify({subject:f.subject,html_body:f.html_body})});
     if(r.ok){toast("success","模版已更新");setMode("list");load();}
@@ -287,10 +348,8 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
         <div>
           <div className="flex items-center justify-between mb-2">
             <label className="text-sm font-medium text-gray-700">HTML 内容</label>
-            <div className="flex bg-gray-100 rounded-lg p-0.5">
-              {([["code","代码"],["split","分屏"],["preview","预览"]] as const).map(([id,label])=>(
-                <button key={id} onClick={()=>setPreviewTab(id)} className={`px-3 py-1 text-xs rounded-md transition-all ${previewTab===id?"bg-white text-indigo-600 shadow-sm font-medium":"text-gray-500 hover:text-gray-700"}`}>{label}</button>
-              ))}
+            <div className="flex items-center">
+              <span className="text-xs text-gray-500 font-medium">HTML 源码 + 可视编辑</span>
             </div>
           </div>
 
@@ -324,11 +383,10 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
           </div>
 
           {/* 编辑区 */}
-          <div className={`border border-gray-200 rounded-b-lg overflow-hidden ${previewTab==="split"?"flex":""}`} style={{minHeight:600}}
+          <div className="border border-gray-200 rounded-b-lg overflow-hidden flex" style={{height:"calc(100vh - 380px)",minHeight:400}}
             onDragOver={e=>{e.preventDefault();e.stopPropagation();}} onDrop={handleDrop}>
-            {(previewTab==="code"||previewTab==="split") && (
-              <div className={previewTab==="split"?"w-1/2 border-r border-gray-200":"w-full"}>
-                <div className="bg-gray-50 px-3 py-1.5 border-b border-gray-200 flex items-center gap-1.5">
+            <div className="w-1/2 border-r border-gray-200 flex flex-col">
+                <div className="bg-gray-50 px-3 py-1.5 border-b border-gray-200 flex items-center gap-1.5 flex-shrink-0">
                   <span className="w-2.5 h-2.5 rounded-full bg-red-400"/><span className="w-2.5 h-2.5 rounded-full bg-yellow-400"/><span className="w-2.5 h-2.5 rounded-full bg-green-400"/>
                   <span className="text-xs text-gray-400 ml-2">HTML 源码</span>
                 </div>
@@ -337,29 +395,24 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
                   onChange={e=>setF({...f,html_body:e.target.value})}
                   onPaste={handlePaste}
                   placeholder={"在此编写 HTML 邮件内容...\n\n支持：粘贴图片 (Ctrl+V) / 拖拽图片到此处"}
-                  className="w-full h-full p-3 text-sm font-mono resize-none outline-none"
-                  style={{minHeight:560,background:"#1e1e2e",color:"#a6e3a1",caretColor:"#fff"}}
+                  className="w-full flex-1 p-3 text-sm font-mono resize-none outline-none"
+                  style={{background:"#1e1e2e",color:"#a6e3a1",caretColor:"#fff"}}
                   spellCheck={false}
                 />
-              </div>
-            )}
-            {(previewTab==="preview"||previewTab==="split") && (
-              <div className={previewTab==="split"?"w-1/2":"w-full"}>
-                <div className="bg-gray-50 px-3 py-1.5 border-b border-gray-200 flex items-center gap-1.5">
-                  <span className="text-xs text-gray-400">邮件预览</span>
-                  {f.html_body && <span className="text-xs text-green-500 ml-auto">实时预览</span>}
+            </div>
+            <div className="w-1/2 flex flex-col">
+                <div className="bg-gray-50 px-3 py-1.5 border-b border-gray-200 flex items-center gap-1.5 flex-shrink-0">
+                  <span className="text-xs text-gray-400">可视编辑</span>
+                  <span className="text-xs text-indigo-500 ml-auto">可直接编辑，失焦后同步</span>
                 </div>
-                <div className="bg-white" style={{minHeight:560}}>
-                  {f.html_body ? (
-                    <iframe srcDoc={getPreviewHtml(f.html_body)} className="w-full border-0" style={{minHeight:560,height:"100%"}} sandbox="allow-same-origin" title="邮件预览"/>
-                  ) : (
-                    <div className="flex items-center justify-center h-full text-gray-300 text-sm" style={{minHeight:560}}>
-                      <div className="text-center"><p className="text-3xl mb-2">📧</p><p>在左侧编写 HTML 后</p><p>此处将实时预览邮件效果</p></div>
-                    </div>
-                  )}
+                <div className="bg-white flex-1">
+                  <iframe
+                    ref={initSplitIframe}
+                    className="w-full border-0 h-full"
+                    title="可视编辑"
+                  />
                 </div>
-              </div>
-            )}
+            </div>
           </div>
         </div>
       </div>

@@ -51,7 +51,12 @@ ses(action="send", params={"template_id": 3, "group_id": 5})
 | action | params | 说明 |
 |--------|--------|------|
 | `groups` | `{"search":"VIP","page":1}` | 搜索客群 |
+| `group_create` | `{"name":"VIP客户","description":"高价值客户"}` | 创建客群 |
+| `group_delete` | `{"group_id":5}` | 删除客群（含所有联系人） |
 | `contacts` | `{"group_id":5,"search":"gmail","page":1}` | 查看联系人 |
+| `contact_add` | `{"group_id":5,"email":"test@example.com","name":"张三"}` | 添加联系人 |
+| `contact_add` | `{"group_id":5,"email":"test@example.com","name":"张三","attributes":"{\"company\":\"Acme\"}"}` | 添加联系人（带属性） |
+| `contact_delete` | `{"contact_id":10}` | 删除联系人 |
 
 ### 邮件模版
 

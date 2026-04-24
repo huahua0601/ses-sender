@@ -103,6 +103,26 @@ server.tool(
 );
 
 server.tool(
+  "create_group",
+  "创建新客群",
+  { name: z.string().describe("客群名称"), description: z.string().optional().describe("客群描述") },
+  async ({ name, description }) => {
+    const d = await api("/groups", { method: "POST", body: JSON.stringify({ name, description: description || "" }) });
+    return { content: [{ type: "text", text: `客群创建成功！ID: ${d.id}，名称: ${d.name}` }] };
+  }
+);
+
+server.tool(
+  "delete_group",
+  "删除客群（同时删除其中所有联系人）",
+  { group_id: z.number().describe("客群 ID") },
+  async ({ group_id }) => {
+    await api(`/groups/${group_id}`, { method: "DELETE" });
+    return { content: [{ type: "text", text: `客群 #${group_id} 已删除` }] };
+  }
+);
+
+server.tool(
   "list_contacts",
   "查看指定客群的联系人列表",
   { group_id: z.number().describe("客群 ID"), search: z.string().optional().describe("搜索邮箱或姓名"), page: z.number().optional().describe("页码") },
@@ -119,6 +139,33 @@ server.tool(
       text += "\n";
     });
     return { content: [{ type: "text", text }] };
+  }
+);
+
+server.tool(
+  "add_contact",
+  "添加联系人到指定客群",
+  {
+    group_id: z.number().describe("客群 ID"),
+    email: z.string().describe("邮箱地址"),
+    name: z.string().optional().describe("姓名"),
+    attributes: z.string().optional().describe("自定义属性 JSON 字符串，如 {\"company\":\"Acme\"}"),
+  },
+  async ({ group_id, email, name, attributes }) => {
+    const body = { group_id, email, name: name || "" };
+    if (attributes) body.attributes = attributes;
+    const d = await api("/contacts", { method: "POST", body: JSON.stringify(body) });
+    return { content: [{ type: "text", text: `联系人已添加！${name || ""} <${email}> → 客群 #${group_id}` }] };
+  }
+);
+
+server.tool(
+  "delete_contact",
+  "删除联系人",
+  { contact_id: z.number().describe("联系人 ID") },
+  async ({ contact_id }) => {
+    await api(`/contacts/${contact_id}`, { method: "DELETE" });
+    return { content: [{ type: "text", text: `联系人 #${contact_id} 已删除` }] };
   }
 );
 
