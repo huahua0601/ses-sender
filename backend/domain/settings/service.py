@@ -4,15 +4,23 @@ from core.config import BEDROCK_MODEL_ID, BEDROCK_REGION
 
 SETTING_KEYS = [
     "ai_provider",           # bedrock
-    "bedrock_model_id",      # 模型 ID
-    "bedrock_region",        # 区域
+    "bedrock_model_id",
+    "bedrock_region",
     "bedrock_auth_mode",     # iam_role / ak_sk / api_key
-    "bedrock_access_key",    # AK/SK 模式: Access Key ID
-    "bedrock_secret_key",    # AK/SK 模式: Secret Access Key
-    "bedrock_api_key",       # API Key 模式: Bedrock API Key (Bearer Token)
+    "bedrock_access_key",
+    "bedrock_secret_key",
+    "bedrock_api_key",
+    # 图片存储
+    "image_storage_mode",    # local / s3
+    "image_s3_bucket",
+    "image_s3_region",
+    "image_s3_prefix",       # S3 key 前缀，如 "ses-sender/images/"
+    "image_s3_access_key",   # 为空则用 IAM Role
+    "image_s3_secret_key",
+    "image_base_url",        # 回显域名，如 https://cdn.example.com
 ]
 
-_SECRET_KEYS = {"bedrock_secret_key", "bedrock_api_key"}
+_SECRET_KEYS = {"bedrock_secret_key", "bedrock_api_key", "image_s3_secret_key"}
 
 
 def get_all_settings(db: Session) -> dict:
@@ -30,10 +38,14 @@ def get_all_settings(db: Session) -> dict:
         result["bedrock_auth_mode"] = "iam_role"
     has_ak_sk = bool(result.get("bedrock_secret_key"))
     has_api_key = bool(result.get("bedrock_api_key"))
+    has_s3_sk = bool(result.get("image_s3_secret_key"))
     for k in _SECRET_KEYS:
         result.pop(k, None)
     result["bedrock_has_ak_sk"] = has_ak_sk
     result["bedrock_has_api_key"] = has_api_key
+    result["image_has_s3_secret"] = has_s3_sk
+    if not result.get("image_storage_mode"):
+        result["image_storage_mode"] = "local"
     return result
 
 
@@ -52,6 +64,23 @@ def save_settings(db: Session, data: dict):
         else:
             db.add(SystemSetting(key=key, value=val))
     db.commit()
+
+
+def get_image_storage_config(db: Session) -> dict:
+    """获取图片存储配置"""
+    from core.config import AWS_REGION
+    keys = [k for k in SETTING_KEYS if k.startswith("image_")]
+    rows = db.query(SystemSetting).filter(SystemSetting.key.in_(keys)).all()
+    cfg = {r.key: r.value for r in rows if r.value}
+    return {
+        "mode": cfg.get("image_storage_mode") or "local",
+        "s3_bucket": cfg.get("image_s3_bucket") or "",
+        "s3_region": cfg.get("image_s3_region") or AWS_REGION,
+        "s3_prefix": cfg.get("image_s3_prefix") or "ses-sender/images/",
+        "s3_access_key": cfg.get("image_s3_access_key") or None,
+        "s3_secret_key": cfg.get("image_s3_secret_key") or None,
+        "base_url": cfg.get("image_base_url") or "",
+    }
 
 
 def get_bedrock_config(db: Session) -> dict:

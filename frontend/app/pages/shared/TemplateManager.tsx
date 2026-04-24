@@ -171,7 +171,8 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
       const r = await fetch(`${API}/upload/image`, {method:"POST", headers:{"Authorization":`Bearer ${token}`}, body:fd});
       if (!r.ok) { const e = await r.json(); toast("error","上传失败",e.detail); return; }
       const d = await r.json();
-      const imgHtml = `<img src="${API}${d.url}" alt="${file.name}" style="max-width:100%;height:auto;border-radius:8px;" />\n`;
+      const imgUrl = d.url.startsWith("http") ? d.url : `${API}${d.url}`;
+      const imgHtml = `<img src="${imgUrl}" alt="${file.name}" style="max-width:100%;height:auto;border-radius:8px;" />\n`;
       setF(prev=>({...prev,html_body:prev.html_body+imgHtml}));
       toast("success","图片已上传",file.name);
     } catch { toast("error","上传失败","网络错误"); }
@@ -259,7 +260,7 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
               <div className="flex flex-wrap gap-2 mt-2">
                 {aiImages.map((img,i)=>(
                   <div key={i} className="relative group">
-                    <img src={`${API}${img.url}`} alt={img.name} className="w-16 h-16 object-cover rounded-lg border border-gray-200"/>
+                    <img src={img.url.startsWith("http")?img.url:`${API}${img.url}`} alt={img.name} className="w-16 h-16 object-cover rounded-lg border border-gray-200"/>
                     <button onClick={()=>setAiImages(prev=>prev.filter((_,j)=>j!==i))}
                       className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white rounded-full text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition">x</button>
                   </div>

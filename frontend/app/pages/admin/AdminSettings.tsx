@@ -19,6 +19,8 @@ export default function AdminSettings() {
     ai_provider:"bedrock",bedrock_model_id:"",bedrock_region:"",
     bedrock_auth_mode:"iam_role",bedrock_access_key:"",bedrock_secret_key:"",bedrock_api_key:"",
     bedrock_has_ak_sk:false,bedrock_has_api_key:false,
+    image_storage_mode:"local",image_s3_bucket:"",image_s3_region:"",image_s3_prefix:"ses-sender/images/",
+    image_s3_access_key:"",image_s3_secret_key:"",image_base_url:"",image_has_s3_secret:false,
   });
 
   useEffect(()=>{
@@ -31,10 +33,13 @@ export default function AdminSettings() {
   const save=async()=>{
     setSaving(true);
     try{
-      const payload:any={ai_provider:f.ai_provider,bedrock_model_id:f.bedrock_model_id,bedrock_region:f.bedrock_region,bedrock_auth_mode:f.bedrock_auth_mode};
+      const payload:any={ai_provider:f.ai_provider,bedrock_model_id:f.bedrock_model_id,bedrock_region:f.bedrock_region,bedrock_auth_mode:f.bedrock_auth_mode,
+        image_storage_mode:f.image_storage_mode,image_s3_bucket:f.image_s3_bucket,image_s3_region:f.image_s3_region,image_s3_prefix:f.image_s3_prefix,
+        image_s3_access_key:f.image_s3_access_key,image_base_url:f.image_base_url};
       if(f.bedrock_access_key) payload.bedrock_access_key=f.bedrock_access_key;
       if(f.bedrock_secret_key) payload.bedrock_secret_key=f.bedrock_secret_key;
       if(f.bedrock_api_key) payload.bedrock_api_key=f.bedrock_api_key;
+      if(f.image_s3_secret_key) payload.image_s3_secret_key=f.image_s3_secret_key;
       const r=await fetch(`${API}/admin/settings`,{method:"PUT",headers:authH(token),body:JSON.stringify(payload)});
       if(r.ok) toast("success","配置已保存");
       else{const e=await r.json();toast("error","保存失败",e.detail);}
@@ -170,6 +175,82 @@ export default function AdminSettings() {
             </div>
           </div>
         )}
+      </div>
+    </Card>
+
+    <Card title="图片存储配置">
+      <div className="space-y-5">
+        <div>
+          <label className="text-sm font-medium text-gray-700 mb-3 block">存储方式</label>
+          <div className="grid grid-cols-2 gap-3">
+            {([{id:"local",label:"本地存储",desc:"图片保存在服务器本地 ./data/uploads/",color:"green"},
+               {id:"s3",label:"AWS S3",desc:"上传到 S3 存储桶，支持 CDN 域名回显",color:"blue"}] as const).map(m=>(
+              <button key={m.id} onClick={()=>setF({...f,image_storage_mode:m.id})}
+                className={`p-3 rounded-xl border-2 text-left transition ${f.image_storage_mode===m.id?`border-${m.color}-400 bg-${m.color}-50`:"border-gray-200 hover:border-gray-300"}`}>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className={`w-3 h-3 rounded-full ${f.image_storage_mode===m.id?`bg-${m.color}-500`:"bg-gray-300"}`}/>
+                  <span className="text-sm font-semibold text-gray-800">{m.label}</span>
+                </div>
+                <p className="text-xs text-gray-500">{m.desc}</p>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {f.image_storage_mode==="s3"&&(
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-3">
+            <h4 className="text-sm font-semibold text-blue-800">S3 存储桶配置</h4>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-medium text-gray-600 mb-1 block">Bucket 名称 *</label>
+                <Input placeholder="my-email-images" value={f.image_s3_bucket} onChange={(e:any)=>setF({...f,image_s3_bucket:e.target.value})}/>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-600 mb-1 block">区域</label>
+                <Select value={f.image_s3_region} onChange={(e:any)=>setF({...f,image_s3_region:e.target.value})}>
+                  <option value="">使用环境默认</option>
+                  {REGIONS.map(r=><option key={r} value={r}>{r}</option>)}
+                </Select>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-600 mb-1 block">Key 前缀</label>
+                <Input placeholder="ses-sender/images/" value={f.image_s3_prefix} onChange={(e:any)=>setF({...f,image_s3_prefix:e.target.value})}/>
+              </div>
+            </div>
+            <h4 className="text-sm font-semibold text-blue-800 pt-2">S3 凭证 <span className="text-gray-400 font-normal text-xs">（留空使用 IAM Role）</span></h4>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-medium text-gray-600 mb-1 block">Access Key ID</label>
+                <Input placeholder={f.image_has_s3_secret?"已配置（留空不修改）":"AKIA..."} value={f.image_s3_access_key} onChange={(e:any)=>setF({...f,image_s3_access_key:e.target.value})}/>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-600 mb-1 block">Secret Access Key</label>
+                <Input type="password" placeholder={f.image_has_s3_secret?"已配置（留空不修改）":"wJalr..."} value={f.image_s3_secret_key} onChange={(e:any)=>setF({...f,image_s3_secret_key:e.target.value})}/>
+              </div>
+            </div>
+            {f.image_has_s3_secret&&!f.image_s3_secret_key&&(
+              <button onClick={()=>{(async()=>{
+                await fetch(`${API}/admin/settings`,{method:"PUT",headers:authH(token),body:JSON.stringify({image_s3_access_key:"__CLEAR__",image_s3_secret_key:"__CLEAR__"})});
+                setF(prev=>({...prev,image_s3_access_key:"",image_has_s3_secret:false}));toast("success","S3 凭证已清除");
+              })();}} className="text-xs text-red-500 hover:text-red-700 underline">清除 S3 凭证，改用 IAM Role</button>
+            )}
+          </div>
+        )}
+
+        <div className="border-t border-gray-100 pt-4">
+          <label className="text-sm font-medium text-gray-700 mb-1.5 block">图片回显域名 <span className="text-gray-400 font-normal text-xs">（可选）</span></label>
+          <Input placeholder="https://cdn.example.com" value={f.image_base_url} onChange={(e:any)=>setF({...f,image_base_url:e.target.value})}/>
+          <p className="text-xs text-gray-400 mt-1">
+            {f.image_storage_mode==="s3"
+              ?"配置 CDN 域名后，上传图片的 URL 将使用此域名拼接 S3 Key。留空则使用 S3 默认 URL。"
+              :"配置域名后，本地图片 URL 将使用此域名拼接。留空则使用相对路径（通过前端代理访问）。"}
+          </p>
+        </div>
+
+        <div className="flex items-center gap-3 pt-2 border-t border-gray-100">
+          <Btn onClick={save} disabled={saving}>{saving?"保存中...":"保存配置"}</Btn>
+          <Badge color={f.image_storage_mode==="s3"?"blue":"green"}>{f.image_storage_mode==="s3"?"S3 存储":"本地存储"}</Badge>
+        </div>
       </div>
     </Card>
   </div>;

@@ -115,7 +115,7 @@ from core.deps import get_current_user
 
 @app.post("/upload/image")
 async def upload_image(file: UploadFile = File(...), current_user=Depends(get_current_user)):
-    """上传图片，返回可访问的 URL"""
+    """上传图片，支持本地存储和 S3"""
     if file.content_type not in ALLOWED_IMAGE_TYPES:
         from fastapi import HTTPException
         raise HTTPException(status_code=400, detail=f"不支持的图片格式: {file.content_type}，支持 JPEG/PNG/GIF/WebP/SVG")
@@ -125,17 +125,42 @@ async def upload_image(file: UploadFile = File(...), current_user=Depends(get_cu
         from fastapi import HTTPException
         raise HTTPException(status_code=400, detail=f"图片大小不能超过 5MB，当前 {len(contents)/1024/1024:.1f}MB")
 
-    # 生成唯一文件名
     ext = os.path.splitext(file.filename or "image.png")[1] or ".png"
     filename = f"{uuid.uuid4().hex[:16]}{ext}"
-    filepath = os.path.join(UPLOAD_DIR, filename)
 
-    with open(filepath, "wb") as fp:
-        fp.write(contents)
+    from core.database import SessionLocal
+    from domain.settings.service import get_image_storage_config
+    db = SessionLocal()
+    try:
+        cfg = get_image_storage_config(db)
+    finally:
+        db.close()
 
-    # 返回相对 URL（前端拼接后端地址）
-    url = f"/uploads/images/{filename}"
-    return {"url": url, "filename": filename, "size": len(contents)}
+    if cfg["mode"] == "s3" and cfg["s3_bucket"]:
+        import boto3
+        s3_kwargs = {"region_name": cfg["s3_region"]}
+        if cfg["s3_access_key"] and cfg["s3_secret_key"]:
+            s3_kwargs["aws_access_key_id"] = cfg["s3_access_key"]
+            s3_kwargs["aws_secret_access_key"] = cfg["s3_secret_key"]
+        s3 = boto3.client("s3", **s3_kwargs)
+        s3_key = f"{cfg['s3_prefix']}{filename}"
+        s3.put_object(Bucket=cfg["s3_bucket"], Key=s3_key, Body=contents, ContentType=file.content_type or "image/png")
+
+        if cfg["base_url"]:
+            url = f"{cfg['base_url'].rstrip('/')}/{s3_key}"
+        else:
+            url = f"https://{cfg['s3_bucket']}.s3.{cfg['s3_region']}.amazonaws.com/{s3_key}"
+        return {"url": url, "filename": filename, "size": len(contents), "storage": "s3"}
+    else:
+        filepath = os.path.join(UPLOAD_DIR, filename)
+        with open(filepath, "wb") as fp:
+            fp.write(contents)
+        base_url = cfg.get("base_url", "").rstrip("/")
+        if base_url:
+            url = f"{base_url}/uploads/images/{filename}"
+        else:
+            url = f"/uploads/images/{filename}"
+        return {"url": url, "filename": filename, "size": len(contents), "storage": "local"}
 
 # --- 注册各业务域路由 ---
 app.include_router(auth_router)
