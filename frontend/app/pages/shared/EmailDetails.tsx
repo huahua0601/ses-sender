@@ -51,8 +51,23 @@ export default function EmailDetails() {
   };
   const fmtTime=(t:string|null)=>t?new Date(t).toLocaleString():"—";
 
+  const doExport=()=>{
+    const params=new URLSearchParams();
+    if(recipient)params.set("recipient",recipient);
+    if(batchId)params.set("batch_id",batchId);
+    if(sendStatus)params.set("send_status",sendStatus);
+    if(deliveryStatus)params.set("delivery_status",deliveryStatus);
+    const url=`${API}/email-details/export?${params}`;
+    const a=document.createElement("a");
+    a.href=url;
+    a.download="email-details.xlsx";
+    fetch(url,{headers:authH(token)}).then(r=>r.blob()).then(blob=>{
+      const u=URL.createObjectURL(blob);a.href=u;a.click();URL.revokeObjectURL(u);
+    });
+  };
+
   return <>
-    <Card title="邮件明细" extra={<Btn variant="secondary" size="sm" onClick={()=>load(page)}>刷新</Btn>}>
+    <Card title="邮件明细" extra={<div className="flex gap-2"><Btn variant="outline" size="sm" onClick={doExport}>导出 Excel</Btn><Btn variant="secondary" size="sm" onClick={()=>load(page)}>刷新</Btn></div>}>
       <div className="mb-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
         <div>
           <label className="text-xs font-medium text-gray-500 mb-1 block">收件人</label>

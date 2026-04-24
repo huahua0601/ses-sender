@@ -811,6 +811,67 @@ def list_email_details(
     }
 
 
+def export_email_details(
+    db: Session, user_id: int, is_admin: bool,
+    recipient: str = "", batch_id: str = "", send_status: str = "", delivery_status: str = "",
+):
+    """导出邮件明细为 Excel"""
+    import io
+    from openpyxl import Workbook
+
+    query = db.query(SendingJobDetail)
+    if not is_admin:
+        user_batch_ids = [r[0] for r in db.query(SendingJob.batch_id).filter(SendingJob.user_id == user_id).all()]
+        query = query.filter(SendingJobDetail.batch_id.in_(user_batch_ids))
+    if recipient:
+        query = query.filter(SendingJobDetail.recipient.contains(recipient))
+    if batch_id:
+        query = query.filter(SendingJobDetail.batch_id.contains(batch_id))
+    if send_status:
+        query = query.filter(SendingJobDetail.send_status == send_status)
+    if delivery_status:
+        query = query.filter(SendingJobDetail.delivery_status == delivery_status)
+
+    items = query.order_by(SendingJobDetail.id.desc()).limit(10000).all()
+
+    batch_ids_all = list(set(d.batch_id for d in items))
+    batch_info = {}
+    if batch_ids_all:
+        jobs = db.query(SendingJob).filter(SendingJob.batch_id.in_(batch_ids_all)).all()
+        for j in jobs:
+            batch_info[j.batch_id] = {"template_name": j.template_name, "group_name": j.group_name, "source_email": j.source_email}
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "邮件明细"
+    headers = ["收件人", "批次ID", "模版", "客群", "发送邮箱", "发送状态", "送达状态", "退信类型", "打开次数", "点击次数", "送达时间", "首次打开", "首次点击", "投诉时间"]
+    ws.append(headers)
+
+    for d in items:
+        info = batch_info.get(d.batch_id, {})
+        ws.append([
+            d.recipient,
+            d.batch_id,
+            info.get("template_name", ""),
+            info.get("group_name", ""),
+            info.get("source_email", ""),
+            d.send_status,
+            d.delivery_status or "",
+            d.bounce_type or "",
+            d.open_count or 0,
+            d.click_count or 0,
+            d.delivery_time.strftime("%Y-%m-%d %H:%M:%S") if d.delivery_time else "",
+            d.first_open_time.strftime("%Y-%m-%d %H:%M:%S") if d.first_open_time else "",
+            d.first_click_time.strftime("%Y-%m-%d %H:%M:%S") if d.first_click_time else "",
+            d.complaint_time.strftime("%Y-%m-%d %H:%M:%S") if d.complaint_time else "",
+        ])
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
 # ==================== 定时发送 ====================
 
 def _calc_next_run(schedule_type: str, scheduled_time, cron_hour: int, cron_minute: int,

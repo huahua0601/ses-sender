@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import PlainTextResponse, HTMLResponse
+from fastapi.responses import PlainTextResponse, HTMLResponse, StreamingResponse
 from sqlalchemy.orm import Session
 import json
 import logging
@@ -226,6 +226,28 @@ def list_email_details(
         batch_id=batch_id.strip(),
         send_status=send_status.strip(),
         delivery_status=delivery_status.strip(),
+    )
+
+
+@router.get("/email-details/export")
+def export_email_details(
+    recipient: str = Query(""),
+    batch_id: str = Query(""),
+    send_status: str = Query(""),
+    delivery_status: str = Query(""),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """导出邮件明细为 Excel"""
+    buf = service.export_email_details(
+        db=db, user_id=current_user.id, is_admin=current_user.is_admin,
+        recipient=recipient.strip(), batch_id=batch_id.strip(),
+        send_status=send_status.strip(), delivery_status=delivery_status.strip(),
+    )
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=email-details.xlsx"},
     )
 
 
