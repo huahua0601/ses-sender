@@ -18,6 +18,13 @@ SETTING_KEYS = [
     "image_s3_access_key",   # 为空则用 IAM Role
     "image_s3_secret_key",
     "image_base_url",        # 回显域名，如 https://cdn.example.com
+    # 退订页面自定义
+    "unsub_page_title",      # 页面标题
+    "unsub_page_subtitle",   # 副标题/描述
+    "unsub_page_reasons",    # 退订原因选项 JSON 数组
+    "unsub_page_success",    # 成功提示文案
+    "unsub_page_logo",       # Logo 图片 URL
+    "unsub_page_color",      # 品牌主色
 ]
 
 _SECRET_KEYS = {"bedrock_secret_key", "bedrock_api_key", "image_s3_secret_key"}
@@ -80,6 +87,55 @@ def get_image_storage_config(db: Session) -> dict:
         "s3_access_key": cfg.get("image_s3_access_key") or None,
         "s3_secret_key": cfg.get("image_s3_secret_key") or None,
         "base_url": cfg.get("image_base_url") or "",
+    }
+
+
+def get_unsub_page_config(db: Session, source_email: str = None) -> dict:
+    """获取退订页面自定义配置（优先用户级，fallback 系统级）"""
+    import json as _json
+
+    user_cfg = {}
+    if source_email:
+        from domain.auth.models import User as UserModel
+        users = db.query(UserModel).filter(UserModel.email == source_email).all()
+        for user in users:
+            if user.unsub_config:
+                try:
+                    user_cfg = _json.loads(user.unsub_config)
+                except Exception:
+                    pass
+                if user_cfg:
+                    break
+
+    keys = [k for k in SETTING_KEYS if k.startswith("unsub_page_")]
+    rows = db.query(SystemSetting).filter(SystemSetting.key.in_(keys)).all()
+    sys_cfg = {r.key: r.value for r in rows if r.value}
+
+    def val(field, sys_key, default):
+        return user_cfg.get(field) or sys_cfg.get(sys_key) or default
+
+    reasons = [
+        {"value": "too_frequent", "label": "收到邮件太频繁"},
+        {"value": "not_relevant", "label": "内容与我无关"},
+        {"value": "never_subscribed", "label": "我从未订阅过"},
+        {"value": "prefer_other", "label": "我更喜欢其他渠道获取信息"},
+        {"value": "other", "label": "其他原因"},
+    ]
+    if user_cfg.get("reasons"):
+        reasons = user_cfg["reasons"] if isinstance(user_cfg["reasons"], list) else reasons
+    elif sys_cfg.get("unsub_page_reasons"):
+        try:
+            reasons = _json.loads(sys_cfg["unsub_page_reasons"])
+        except Exception:
+            pass
+
+    return {
+        "title": val("title", "unsub_page_title", "退订确认"),
+        "subtitle": val("subtitle", "unsub_page_subtitle", "我们很遗憾看到您离开。请告诉我们退订原因，帮助我们改进服务。"),
+        "reasons": reasons,
+        "success": val("success", "unsub_page_success", "退订成功"),
+        "logo": val("logo", "unsub_page_logo", ""),
+        "color": val("color", "unsub_page_color", "#667eea"),
     }
 
 

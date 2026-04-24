@@ -59,3 +59,30 @@ def update_user(user_id: int, data: UserUpdate, admin: User = Depends(require_ad
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
     return service.update_user(db, user, data)
+
+
+# ========== 用户：退订页面自定义 ==========
+@router.get("/user/unsub-config")
+def get_unsub_config(current_user: User = Depends(get_current_user)):
+    import json
+    if current_user.unsub_config:
+        try:
+            return json.loads(current_user.unsub_config)
+        except Exception:
+            pass
+    return {}
+
+
+@router.put("/user/unsub-config")
+def save_unsub_config(data: dict, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    import json
+    current_user.unsub_config = json.dumps(data, ensure_ascii=False)
+    db.commit()
+    return {"message": "退订页面配置已保存"}
+
+
+@router.get("/user/unsub-defaults")
+def get_unsub_defaults(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """获取管理员设置的退订页面默认值"""
+    from domain.settings.service import get_unsub_page_config
+    return get_unsub_page_config(db)

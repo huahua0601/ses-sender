@@ -57,6 +57,8 @@ def unsubscribe_page(token: str = Query(""), db: Session = Depends(get_db)):
     """退订页面 (GET) — 用户点击邮件中退订链接后到达，选择原因后确认"""
     from core.unsubscribe import verify_unsubscribe_token
     from domain.sending.models import UnsubscribeRecord
+    from domain.settings.service import get_unsub_page_config
+    import json as _json
 
     if not token:
         return HTMLResponse("<h2>Invalid link</h2>", status_code=400)
@@ -66,6 +68,9 @@ def unsubscribe_page(token: str = Query(""), db: Session = Depends(get_db)):
         return HTMLResponse("<h2>Invalid or expired link</h2>", status_code=400)
 
     email, source_email = result
+    cfg = get_unsub_page_config(db, source_email=source_email)
+    color = cfg["color"]
+    logo_html = f'<img src="{cfg["logo"]}" alt="Logo" style="max-height:48px;margin-bottom:16px;">' if cfg["logo"] else ""
 
     existing = db.query(UnsubscribeRecord).filter(
         UnsubscribeRecord.email == email,
@@ -80,18 +85,23 @@ def unsubscribe_page(token: str = Query(""), db: Session = Depends(get_db)):
 .card{{background:#fff;border-radius:16px;padding:48px;max-width:480px;text-align:center;box-shadow:0 4px 24px rgba(0,0,0,.08)}}
 h1{{color:#6b7280;font-size:24px;margin-bottom:12px}} p{{color:#9ca3af;line-height:1.6}}</style>
 </head><body><div class="card">
+{logo_html}
 <p style="font-size:48px;margin-bottom:16px">📭</p>
 <h1>您已退订</h1>
 <p><strong>{email}</strong> 已不再接收来自 <strong>{source_email}</strong> 的邮件。</p>
 </div></body></html>"""
         return HTMLResponse(html)
 
+    reasons_html = ""
+    for r in cfg["reasons"]:
+        reasons_html += f"""<div class="reason" onclick="selectReason(this,'{r["value"]}')"><input type="radio" name="reason" value="{r["value"]}"><label>{r["label"]}</label></div>\n"""
+
     html = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>退订确认</title>
+<title>{cfg["title"]}</title>
 <style>
 *{{box-sizing:border-box;margin:0;padding:0}}
-body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);padding:20px}}
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;background:linear-gradient(135deg,{color} 0%,{color}cc 100%);padding:20px}}
 .card{{background:#fff;border-radius:20px;padding:40px;max-width:520px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.15)}}
 h1{{font-size:22px;color:#1f2937;margin-bottom:8px}}
 .subtitle{{color:#6b7280;font-size:14px;margin-bottom:24px;line-height:1.5}}
@@ -100,12 +110,12 @@ h1{{font-size:22px;color:#1f2937;margin-bottom:8px}}
 h3{{font-size:14px;color:#374151;margin-bottom:12px}}
 .reasons{{display:flex;flex-direction:column;gap:8px;margin-bottom:20px}}
 .reason{{display:flex;align-items:center;gap:10px;padding:12px 16px;border:2px solid #e5e7eb;border-radius:10px;cursor:pointer;transition:all .2s}}
-.reason:hover{{border-color:#a5b4fc;background:#eef2ff}}
-.reason input{{accent-color:#6366f1;width:16px;height:16px}}
+.reason:hover{{border-color:{color}88;background:{color}08}}
+.reason input{{accent-color:{color};width:16px;height:16px}}
 .reason label{{font-size:14px;color:#374151;cursor:pointer;flex:1}}
-.reason.selected{{border-color:#6366f1;background:#eef2ff}}
+.reason.selected{{border-color:{color};background:{color}08}}
 .other-input{{width:100%;border:2px solid #e5e7eb;border-radius:8px;padding:10px 14px;font-size:13px;margin-top:8px;display:none;outline:none;transition:border .2s}}
-.other-input:focus{{border-color:#6366f1}}
+.other-input:focus{{border-color:{color}}}
 .btn{{width:100%;padding:14px;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;transition:all .2s}}
 .btn-primary{{background:#ef4444;color:#fff}}.btn-primary:hover{{background:#dc2626}}
 .btn-primary:disabled{{background:#d1d5db;cursor:not-allowed}}
@@ -117,28 +127,25 @@ h3{{font-size:14px;color:#374151;margin-bottom:12px}}
 </head><body>
 <div class="card">
   <div id="form-view">
-    <p style="font-size:40px;margin-bottom:16px">📧</p>
-    <h1>退订确认</h1>
-    <p class="subtitle">我们很遗憾看到您离开。请告诉我们退订原因，帮助我们改进服务。</p>
+    {logo_html}
+    <h1>{cfg["title"]}</h1>
+    <p class="subtitle">{cfg["subtitle"]}</p>
     <div class="email-info">
       退订邮箱：<strong>{email}</strong><br>
       发送方：<strong>{source_email}</strong>
     </div>
     <h3>退订原因（可选）</h3>
     <div class="reasons">
-      <div class="reason" onclick="selectReason(this,'too_frequent')"><input type="radio" name="reason" value="too_frequent"><label>收到邮件太频繁</label></div>
-      <div class="reason" onclick="selectReason(this,'not_relevant')"><input type="radio" name="reason" value="not_relevant"><label>内容与我无关</label></div>
-      <div class="reason" onclick="selectReason(this,'never_subscribed')"><input type="radio" name="reason" value="never_subscribed"><label>我从未订阅过</label></div>
-      <div class="reason" onclick="selectReason(this,'prefer_other')"><input type="radio" name="reason" value="prefer_other"><label>我更喜欢其他渠道获取信息</label></div>
-      <div class="reason" onclick="selectReason(this,'other')"><input type="radio" name="reason" value="other"><label>其他原因</label></div>
+      {reasons_html}
     </div>
     <input id="other-text" class="other-input" placeholder="请输入其他原因..." maxlength="200">
     <button class="btn btn-primary" id="confirm-btn" onclick="doUnsubscribe()">确认退订</button>
     <button class="btn btn-secondary" onclick="window.close()">取消</button>
   </div>
   <div class="success" id="success-view">
+    {logo_html}
     <p style="font-size:48px">✅</p>
-    <h2>退订成功</h2>
+    <h2>{cfg["success"]}</h2>
     <p><strong>{email}</strong> 已不再接收来自 <strong>{source_email}</strong> 的邮件。</p>
     <p style="margin-top:16px;color:#9ca3af;font-size:13px">感谢您的反馈，我们会持续改进。</p>
   </div>

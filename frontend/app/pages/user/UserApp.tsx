@@ -8,7 +8,7 @@ import UserSchedule from "./UserSchedule";
 import SendingHistory from "./SendingHistory";
 import TemplateManager from "../shared/TemplateManager";
 import EmailDetails from "../shared/EmailDetails";
-import UnsubscribeList from "../shared/UnsubscribeList";
+import UnsubscribeManager from "../shared/UnsubscribeManager";
 
 export default function UserApp() {
   const [tab,setTab]=useState("dashboard");
@@ -25,7 +25,7 @@ export default function UserApp() {
         {tab==="schedule"&&<UserSchedule/>}
         {tab==="history"&&<SendingHistory/>}
         {tab==="details"&&<EmailDetails/>}
-        {tab==="unsub"&&<UnsubscribeList/>}
+        {tab==="unsub"&&<UnsubscribeManager/>}
       </main>
     </div>
   </div>;

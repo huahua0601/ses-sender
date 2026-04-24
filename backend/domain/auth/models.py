@@ -15,6 +15,7 @@ class User(Base):
     is_admin = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True)
     daily_send_limit = Column(Integer, default=1000)
+    unsub_config = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     groups = relationship("ContactGroup", back_populates="owner")
