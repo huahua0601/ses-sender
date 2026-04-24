@@ -23,10 +23,12 @@ async def unsubscribe_post(request: Request, db: Session = Depends(get_db)):
 
     # token 可能在 query params 或 form body 中
     token = request.query_params.get("token", "")
+    reason = "one-click"
     if not token:
         try:
             form = await request.form()
             token = form.get("token", "") or form.get("List-Unsubscribe", "")
+            reason = form.get("reason", "") or "one-click"
         except Exception:
             pass
     if not token:
@@ -43,16 +45,16 @@ async def unsubscribe_post(request: Request, db: Session = Depends(get_db)):
         UnsubscribeRecord.source_email == source_email,
     ).first()
     if not existing:
-        db.add(UnsubscribeRecord(email=email, source_email=source_email, reason="one-click"))
+        db.add(UnsubscribeRecord(email=email, source_email=source_email, reason=reason[:64]))
         db.commit()
-        logger.info(f"[Unsubscribe] {email} unsubscribed from {source_email}")
+        logger.info(f"[Unsubscribe] {email} unsubscribed from {source_email} reason={reason}")
 
     return PlainTextResponse("ok", status_code=200)
 
 
 @router.get("/unsubscribe", response_class=HTMLResponse)
 def unsubscribe_page(token: str = Query(""), db: Session = Depends(get_db)):
-    """退订确认页面 (GET) — Gmail 'Go to website' 跳转到此"""
+    """退订页面 (GET) — 用户点击邮件中退订链接后到达，选择原因后确认"""
     from core.unsubscribe import verify_unsubscribe_token
     from domain.sending.models import UnsubscribeRecord
 
@@ -69,20 +71,101 @@ def unsubscribe_page(token: str = Query(""), db: Session = Depends(get_db)):
         UnsubscribeRecord.email == email,
         UnsubscribeRecord.source_email == source_email,
     ).first()
-    if not existing:
-        db.add(UnsubscribeRecord(email=email, source_email=source_email, reason="one-click"))
-        db.commit()
+
+    if existing:
+        html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Already Unsubscribed</title>
+<style>body{{font-family:-apple-system,BlinkMacSystemFont,sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f8f9fa}}
+.card{{background:#fff;border-radius:16px;padding:48px;max-width:480px;text-align:center;box-shadow:0 4px 24px rgba(0,0,0,.08)}}
+h1{{color:#6b7280;font-size:24px;margin-bottom:12px}} p{{color:#9ca3af;line-height:1.6}}</style>
+</head><body><div class="card">
+<p style="font-size:48px;margin-bottom:16px">📭</p>
+<h1>您已退订</h1>
+<p><strong>{email}</strong> 已不再接收来自 <strong>{source_email}</strong> 的邮件。</p>
+</div></body></html>"""
+        return HTMLResponse(html)
 
     html = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Unsubscribed</title>
-<style>body{{font-family:-apple-system,BlinkMacSystemFont,sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f8f9fa}}
-.card{{background:#fff;border-radius:12px;padding:48px;max-width:480px;text-align:center;box-shadow:0 2px 12px rgba(0,0,0,.08)}}
-h1{{color:#10b981;font-size:28px;margin-bottom:12px}} p{{color:#6b7280;line-height:1.6}} .email{{color:#111827;font-weight:600}}</style>
-</head><body><div class="card">
-<h1>Successfully Unsubscribed</h1>
-<p>The email address <span class="email">{email}</span> has been unsubscribed from emails sent by <span class="email">{source_email}</span>.</p>
-<p style="margin-top:24px;font-size:14px;color:#9ca3af">You will no longer receive emails from this sender.</p>
+<title>退订确认</title>
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);padding:20px}}
+.card{{background:#fff;border-radius:20px;padding:40px;max-width:520px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.15)}}
+h1{{font-size:22px;color:#1f2937;margin-bottom:8px}}
+.subtitle{{color:#6b7280;font-size:14px;margin-bottom:24px;line-height:1.5}}
+.email-info{{background:#f3f4f6;border-radius:10px;padding:14px 18px;margin-bottom:24px;font-size:13px;color:#4b5563}}
+.email-info strong{{color:#111827}}
+h3{{font-size:14px;color:#374151;margin-bottom:12px}}
+.reasons{{display:flex;flex-direction:column;gap:8px;margin-bottom:20px}}
+.reason{{display:flex;align-items:center;gap:10px;padding:12px 16px;border:2px solid #e5e7eb;border-radius:10px;cursor:pointer;transition:all .2s}}
+.reason:hover{{border-color:#a5b4fc;background:#eef2ff}}
+.reason input{{accent-color:#6366f1;width:16px;height:16px}}
+.reason label{{font-size:14px;color:#374151;cursor:pointer;flex:1}}
+.reason.selected{{border-color:#6366f1;background:#eef2ff}}
+.other-input{{width:100%;border:2px solid #e5e7eb;border-radius:8px;padding:10px 14px;font-size:13px;margin-top:8px;display:none;outline:none;transition:border .2s}}
+.other-input:focus{{border-color:#6366f1}}
+.btn{{width:100%;padding:14px;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;transition:all .2s}}
+.btn-primary{{background:#ef4444;color:#fff}}.btn-primary:hover{{background:#dc2626}}
+.btn-primary:disabled{{background:#d1d5db;cursor:not-allowed}}
+.btn-secondary{{background:#f3f4f6;color:#6b7280;margin-top:10px}}.btn-secondary:hover{{background:#e5e7eb}}
+.success{{display:none;text-align:center}}
+.success h2{{color:#10b981;font-size:24px;margin:16px 0 8px}}
+.success p{{color:#6b7280;font-size:14px;line-height:1.6}}
+</style>
+</head><body>
+<div class="card">
+  <div id="form-view">
+    <p style="font-size:40px;margin-bottom:16px">📧</p>
+    <h1>退订确认</h1>
+    <p class="subtitle">我们很遗憾看到您离开。请告诉我们退订原因，帮助我们改进服务。</p>
+    <div class="email-info">
+      退订邮箱：<strong>{email}</strong><br>
+      发送方：<strong>{source_email}</strong>
+    </div>
+    <h3>退订原因（可选）</h3>
+    <div class="reasons">
+      <div class="reason" onclick="selectReason(this,'too_frequent')"><input type="radio" name="reason" value="too_frequent"><label>收到邮件太频繁</label></div>
+      <div class="reason" onclick="selectReason(this,'not_relevant')"><input type="radio" name="reason" value="not_relevant"><label>内容与我无关</label></div>
+      <div class="reason" onclick="selectReason(this,'never_subscribed')"><input type="radio" name="reason" value="never_subscribed"><label>我从未订阅过</label></div>
+      <div class="reason" onclick="selectReason(this,'prefer_other')"><input type="radio" name="reason" value="prefer_other"><label>我更喜欢其他渠道获取信息</label></div>
+      <div class="reason" onclick="selectReason(this,'other')"><input type="radio" name="reason" value="other"><label>其他原因</label></div>
+    </div>
+    <input id="other-text" class="other-input" placeholder="请输入其他原因..." maxlength="200">
+    <button class="btn btn-primary" id="confirm-btn" onclick="doUnsubscribe()">确认退订</button>
+    <button class="btn btn-secondary" onclick="window.close()">取消</button>
+  </div>
+  <div class="success" id="success-view">
+    <p style="font-size:48px">✅</p>
+    <h2>退订成功</h2>
+    <p><strong>{email}</strong> 已不再接收来自 <strong>{source_email}</strong> 的邮件。</p>
+    <p style="margin-top:16px;color:#9ca3af;font-size:13px">感谢您的反馈，我们会持续改进。</p>
+  </div>
+</div>
+<script>
+let selectedReason='';
+function selectReason(el,val){{
+  document.querySelectorAll('.reason').forEach(r=>r.classList.remove('selected'));
+  el.classList.add('selected');
+  el.querySelector('input').checked=true;
+  selectedReason=val;
+  document.getElementById('other-text').style.display=val==='other'?'block':'none';
+}}
+async function doUnsubscribe(){{
+  const btn=document.getElementById('confirm-btn');
+  btn.disabled=true;btn.textContent='处理中...';
+  const reason=selectedReason==='other'?('other:'+document.getElementById('other-text').value):selectedReason;
+  try{{
+    const fd=new FormData();
+    fd.append('token','{token}');
+    fd.append('reason',reason||'web-unsubscribe');
+    await fetch(window.location.pathname,{{method:'POST',body:fd}});
+    document.getElementById('form-view').style.display='none';
+    document.getElementById('success-view').style.display='block';
+  }}catch{{btn.disabled=false;btn.textContent='确认退订';alert('操作失败，请重试');}}
+}}
+</script>
 </div></body></html>"""
     return HTMLResponse(html)
 
@@ -320,6 +403,25 @@ def delete_unsubscribe(
     db.delete(record)
     db.commit()
     return {"message": "已恢复，该邮箱将重新接收邮件"}
+
+
+@router.post("/unsubscribe-list/batch-delete")
+def batch_delete_unsubscribe(
+    data: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """批量删除退订记录（批量恢复发送）"""
+    from domain.sending.models import UnsubscribeRecord
+    ids = data.get("ids", [])
+    if not ids:
+        raise HTTPException(status_code=400, detail="未选择记录")
+    query = db.query(UnsubscribeRecord).filter(UnsubscribeRecord.id.in_(ids))
+    if not current_user.is_admin:
+        query = query.filter(UnsubscribeRecord.source_email == current_user.email)
+    count = query.delete(synchronize_session=False)
+    db.commit()
+    return {"message": f"已恢复 {count} 条记录"}
 
 
 # ========== 定时发送 ==========
