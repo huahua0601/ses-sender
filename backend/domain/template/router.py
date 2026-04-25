@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from core.database import get_db
 from core.deps import get_current_user, require_admin
 from domain.auth.models import User
-from domain.template.schemas import TemplateCreate, TemplateUpdate, TemplateOut, OptimizeRequest
+from domain.template.schemas import TemplateCreate, TemplateUpdate, TemplateOut, OptimizeRequest, EvaluateRequest, DimensionFixRequest
 from domain.template import service
 
 router = APIRouter(tags=["邮件模版管理"])
@@ -15,7 +15,19 @@ router = APIRouter(tags=["邮件模版管理"])
 @router.post("/ai/optimize-template")
 def optimize_template(req: OptimizeRequest, current_user: User = Depends(get_current_user)):
     """调用 Bedrock AI 优化邮件模板"""
-    return service.optimize_template_with_ai(req.subject, req.html_body, req.user_feedback, req.images)
+    return service.optimize_template_with_ai(req.subject, req.html_body, req.user_feedback, req.images, req.model_id)
+
+
+@router.post("/ai/evaluate-template")
+def evaluate_template(req: EvaluateRequest, current_user: User = Depends(get_current_user)):
+    """AI 评测邮件模板"""
+    return service.evaluate_template_with_ai(req.subject, req.html_body, req.model_ids)
+
+
+@router.post("/ai/dimension-fix")
+def dimension_fix(req: DimensionFixRequest, current_user: User = Depends(get_current_user)):
+    """获取单个维度的 AI 修复建议"""
+    return service.get_dimension_fix(req.subject, req.html_body, req.dimension, req.issues, req.model_id)
 
 
 # ========== 通用：按用户隔离的模版管理 ==========

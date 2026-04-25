@@ -192,8 +192,8 @@ def _parse_ai_json(text: str) -> dict:
     raise HTTPException(status_code=500, detail="AI 返回格式异常，请重试")
 
 
-def optimize_template_with_ai(subject: str, html_body: str, user_feedback: str = None, images: list = None) -> dict:
-    """调用 AWS Bedrock 优化邮件模板"""
+def optimize_template_with_ai(subject: str, html_body: str, user_feedback: str = None, images: list = None, selected_model_id: str = None) -> dict:
+    """调用 AI 优化邮件模板（支持多模型选择）"""
     import json
     import logging
     import boto3
@@ -202,19 +202,30 @@ def optimize_template_with_ai(subject: str, html_body: str, user_feedback: str =
 
     logger = logging.getLogger("ses-sender.ai")
 
-    db_cfg = {}
+    model_cfg = {}
     try:
-        from domain.settings.service import get_bedrock_config
+        from domain.settings.service import get_ai_model_by_id, get_ai_models, get_bedrock_config
         _db = SessionLocal()
         try:
-            db_cfg = get_bedrock_config(_db)
+            if selected_model_id:
+                model_cfg = get_ai_model_by_id(_db, selected_model_id)
+            else:
+                models = get_ai_models(_db)
+                model_cfg = models[0] if models else {}
+            if not model_cfg:
+                db_cfg = get_bedrock_config(_db)
+                model_cfg = {"provider": "bedrock", "model_id": db_cfg.get("model_id") or BEDROCK_MODEL_ID,
+                             "region": db_cfg.get("region") or BEDROCK_REGION, "auth_mode": db_cfg.get("auth_mode","iam_role"),
+                             "access_key": db_cfg.get("access_key"), "secret_key": db_cfg.get("secret_key"),
+                             "bedrock_api_key": db_cfg.get("api_key")}
         finally:
             _db.close()
     except Exception:
         pass
 
-    model_id = db_cfg.get("model_id") or BEDROCK_MODEL_ID
-    region = db_cfg.get("region") or BEDROCK_REGION
+    provider = model_cfg.get("type") or model_cfg.get("provider") or "bedrock"
+    model_id = model_cfg.get("model_id") or model_cfg.get("model") or BEDROCK_MODEL_ID
+    region = model_cfg.get("region") or BEDROCK_REGION
 
     if not model_id:
         raise HTTPException(status_code=400, detail="未配置 AI 模型，请在系统设置中配置 Bedrock")
@@ -265,16 +276,20 @@ Important:
 
     image_data = _load_images(images, logger) if images else []
 
+    if provider == "openai_compatible":
+        openai_cfg = {"api_base": model_cfg.get("api_base",""), "api_key": model_cfg.get("api_key",""), "model": model_id}
+        return _invoke_openai_compatible(openai_cfg, prompt, image_data, logger, subject, html_body)
+
     try:
-        api_key = db_cfg.get("api_key")
-        auth_mode = db_cfg.get("auth_mode", "iam_role")
+        api_key = model_cfg.get("bedrock_api_key") or model_cfg.get("api_key")
+        auth_mode = model_cfg.get("auth_mode", "iam_role")
 
         if auth_mode == "api_key" and api_key:
             ai_text = _invoke_bedrock_api_key(model_id, region, api_key, prompt, logger, image_data)
         else:
             client_kwargs = {"region_name": region}
             if auth_mode == "ak_sk":
-                ak, sk = db_cfg.get("access_key"), db_cfg.get("secret_key")
+                ak, sk = model_cfg.get("access_key"), model_cfg.get("secret_key")
                 if ak and sk:
                     client_kwargs["aws_access_key_id"] = ak
                     client_kwargs["aws_secret_access_key"] = sk
@@ -282,27 +297,27 @@ Important:
 
             content = []
             for img in image_data:
+                import base64 as _b64
                 content.append({
-                    "type": "image",
-                    "source": {"type": "base64", "media_type": img["media_type"], "data": img["data"]},
+                    "image": {
+                        "format": img["format"],
+                        "source": {"bytes": _b64.b64decode(img["data"])},
+                    }
                 })
-            content.append({"type": "text", "text": prompt})
+            content.append({"text": prompt})
 
-            body = json.dumps({
-                "anthropic_version": "bedrock-2023-05-31",
-                "max_tokens": 8192,
-                "messages": [{"role": "user", "content": content}],
-                "temperature": 0.3,
-            })
-
-            response = client.invoke_model(
+            response = client.converse(
                 modelId=model_id,
-                contentType="application/json",
-                accept="application/json",
-                body=body,
+                messages=[{"role": "user", "content": content}],
+                inferenceConfig={"maxTokens": 8192, "temperature": 0.3},
             )
-            result = json.loads(response["body"].read())
-            ai_text = result.get("content", [{}])[0].get("text", "{}")
+
+            ai_text = ""
+            for block in response.get("output", {}).get("message", {}).get("content", []):
+                if "text" in block:
+                    ai_text += block["text"]
+            if not ai_text:
+                ai_text = "{}"
 
         logger.debug(f"[AI Optimize] Raw response length: {len(ai_text)}")
         logger.debug(f"[AI Optimize] Raw response first 500 chars: {ai_text[:500]}")
@@ -321,6 +336,55 @@ Important:
     except Exception as e:
         logger.error(f"[AI Optimize] Bedrock 调用失败: {e}")
         raise HTTPException(status_code=500, detail=f"AI 优化失败: {str(e)}")
+
+
+def _invoke_openai_compatible(cfg: dict, prompt: str, image_data: list, logger, subject: str, html_body: str) -> dict:
+    """通过 OpenAI 兼容 API 调用模型"""
+    import json
+    import urllib.request
+    import urllib.error
+
+    api_base = (cfg.get("api_base") or "").strip()
+    if not api_base:
+        raise HTTPException(status_code=400, detail="未配置 OpenAI Compatible API Base URL")
+
+    url = api_base.rstrip("/") + "/chat/completions"
+
+    content = []
+    for img in (image_data or []):
+        content.append({"type": "image_url", "image_url": {"url": f"data:{img['media_type']};base64,{img['data']}"}})
+    content.append({"type": "text", "text": prompt})
+
+    messages = [{"role": "user", "content": content if image_data else prompt}]
+    payload = json.dumps({
+        "model": cfg.get("model") or "gpt-4o",
+        "messages": messages,
+        "max_tokens": 8192,
+        "temperature": 0.3,
+    }).encode()
+
+    req = urllib.request.Request(url, data=payload, method="POST")
+    req.add_header("Content-Type", "application/json")
+    if cfg.get("api_key"):
+        req.add_header("Authorization", f"Bearer {cfg['api_key']}")
+
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            data = json.loads(resp.read())
+            ai_text = data.get("choices", [{}])[0].get("message", {}).get("content", "{}")
+    except urllib.error.HTTPError as e:
+        body = e.read().decode() if e.fp else ""
+        logger.error(f"[AI Optimize] OpenAI API error: HTTP {e.code} {body[:300]}")
+        raise HTTPException(status_code=502, detail=f"AI API 调用失败: HTTP {e.code}")
+
+    logger.debug(f"[AI Optimize] OpenAI response length: {len(ai_text)}")
+    ai_json = _parse_ai_json(ai_text)
+
+    return {
+        "suggestions": ai_json.get("suggestions", []),
+        "optimized_subject": ai_json.get("optimized_subject", subject),
+        "optimized_html": ai_json.get("optimized_html", html_body),
+    }
 
 
 def _load_images(image_urls: list, logger) -> list:
@@ -411,3 +475,223 @@ def _invoke_bedrock_api_key(model_id: str, region: str, api_key: str, prompt: st
         body = e.read().decode() if e.fp else ""
         logger.error(f"[AI Optimize] Bedrock API Key 调用失败: HTTP {e.code} {body[:300]}")
         raise HTTPException(status_code=502, detail=f"Bedrock API 调用失败: HTTP {e.code}")
+
+
+def evaluate_template_with_ai(subject: str, html_body: str, model_ids: list = None) -> dict:
+    """AI 评测邮件模板（多模型 × 多维度并发）"""
+    import json
+    import logging
+    import boto3
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from core.config import BEDROCK_MODEL_ID, BEDROCK_REGION
+    from core.database import SessionLocal
+
+    logger = logging.getLogger("ses-sender.ai")
+
+    all_models = []
+    try:
+        from domain.settings.service import get_ai_model_by_id, get_ai_models, get_bedrock_config
+        _db = SessionLocal()
+        try:
+            available = get_ai_models(_db)
+            if model_ids:
+                for mid in model_ids:
+                    cfg = get_ai_model_by_id(_db, mid)
+                    if cfg:
+                        all_models.append(cfg)
+            if not all_models:
+                if available:
+                    p = available[0]
+                    if p.get("models"):
+                        m = p["models"][0]
+                        cfg = {k: v for k, v in p.items() if k != "models"}
+                        cfg.update(m)
+                        all_models.append(cfg)
+            if not all_models:
+                db_cfg = get_bedrock_config(_db)
+                all_models.append({"id": "default", "name": "Default", "type": "bedrock",
+                                   "model_id": db_cfg.get("model_id") or BEDROCK_MODEL_ID,
+                                   "region": db_cfg.get("region") or BEDROCK_REGION,
+                                   "auth_mode": db_cfg.get("auth_mode", "iam_role")})
+        finally:
+            _db.close()
+    except Exception:
+        pass
+
+    DIMENSIONS = [
+        ("送达率", "Spam trigger words, authentication, sender reputation, SPF/DKIM/DMARC"),
+        ("主题行质量", "Length 30-50 chars, personalization, urgency, emoji, A/B potential"),
+        ("反垃圾邮件合规", "CAN-SPAM, GDPR, unsubscribe link, physical address, sender ID"),
+        ("HTML 质量", "Inline CSS, table layout, encoding, no JS, alt tags, DOCTYPE"),
+        ("移动端适配", "Responsive, font 14px+, buttons 44px+, single column, media queries"),
+        ("ISP 兼容性", "Gmail 102KB clipping, Outlook VML, Yahoo, dark mode"),
+        ("内容质量", "Text-image ratio 60:40, CTA clarity, structure, personalization"),
+        ("合规性", "Unsubscribe link, List-Unsubscribe hint, privacy policy, opt-out"),
+    ]
+
+    email_ctx = f"Subject: {subject}\nHTML:\n{html_body}"
+
+    def eval_one(model_cfg: dict, dim_name: str, criteria: str) -> dict:
+        prompt = f"""Evaluate this email on "{dim_name}". Criteria: {criteria}
+
+{email_ctx}
+
+Chinese. ONLY JSON, no markdown: {{"score":85,"issues":["issue"],"suggestions":["suggestion"]}}
+Score 0-100. Be strict."""
+        try:
+            ai_text = _call_ai_model(model_cfg, prompt, logger)
+            try:
+                r = json.loads(ai_text.strip().strip("`").strip())
+            except json.JSONDecodeError:
+                import re
+                sm = re.search(r'"score"\s*:\s*(\d+)', ai_text)
+                score = int(sm.group(1)) if sm else 50
+                items = re.findall(r'"([^"]{5,80})"', ai_text)
+                items = [i for i in items if i not in ("score","issues","suggestions") and not i.isdigit()][:5]
+                r = {"score": score, "issues": items[:3], "suggestions": items[3:]}
+            return {"model_id": model_cfg.get("id",""), "dim": dim_name,
+                    "score": min(100, max(0, r.get("score", 50))),
+                    "issues": r.get("issues", [])[:5], "suggestions": r.get("suggestions", [])[:5]}
+        except Exception as e:
+            logger.warning(f"[Eval] {model_cfg.get('name','')} / {dim_name}: {e}")
+            return {"model_id": model_cfg.get("id",""), "dim": dim_name, "score": 0,
+                    "issues": [f"评测失败"], "suggestions": []}
+
+    tasks = []
+    with ThreadPoolExecutor(max_workers=min(8, len(all_models) * len(DIMENSIONS))) as executor:
+        for mcfg in all_models:
+            for dname, dcriteria in DIMENSIONS:
+                tasks.append(executor.submit(eval_one, mcfg, dname, dcriteria))
+        results_raw = [t.result() for t in tasks]
+
+    dim_order = [d[0] for d in DIMENSIONS]
+    model_results = []
+    for mcfg in all_models:
+        mid = mcfg.get("id", "")
+        dims = [r for r in results_raw if r["model_id"] == mid]
+        dims.sort(key=lambda x: dim_order.index(x["dim"]) if x["dim"] in dim_order else 99)
+        dimensions = [{"name": d["dim"], "score": d["score"], "max": 100, "issues": d["issues"], "suggestions": d["suggestions"]} for d in dims]
+        scores = [d["score"] for d in dims if d["score"] > 0]
+        overall = round(sum(scores) / len(scores)) if scores else 0
+        model_results.append({
+            "model_id": mid,
+            "model_name": mcfg.get("name", mid),
+            "overall_score": overall,
+            "dimensions": dimensions,
+        })
+
+    return {"models": model_results}
+
+
+def _call_ai_model(model_cfg: dict, prompt: str, logger) -> str:
+    """统一的 AI 模型调用（供评测等功能复用）"""
+    import json
+    import boto3
+    from core.config import BEDROCK_MODEL_ID, BEDROCK_REGION
+
+    provider = model_cfg.get("type") or model_cfg.get("provider") or "bedrock"
+    model_id = model_cfg.get("model_id") or model_cfg.get("model") or BEDROCK_MODEL_ID
+    region = model_cfg.get("region") or BEDROCK_REGION
+
+    if provider == "openai_compatible":
+        import urllib.request
+        api_base = (model_cfg.get("api_base") or "").strip()
+        url = api_base.rstrip("/") + "/chat/completions"
+        payload = json.dumps({"model": model_id, "messages": [{"role": "user", "content": prompt}], "max_tokens": 1024, "temperature": 0.2}).encode()
+        req = urllib.request.Request(url, data=payload, method="POST")
+        req.add_header("Content-Type", "application/json")
+        if model_cfg.get("api_key"):
+            req.add_header("Authorization", f"Bearer {model_cfg['api_key']}")
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            data = json.loads(resp.read())
+            return data.get("choices", [{}])[0].get("message", {}).get("content", "{}")
+    else:
+        client_kwargs = {"region_name": region}
+        auth_mode = model_cfg.get("auth_mode", "iam_role")
+        if auth_mode == "ak_sk":
+            ak, sk = model_cfg.get("access_key"), model_cfg.get("secret_key")
+            if ak and sk:
+                client_kwargs["aws_access_key_id"] = ak
+                client_kwargs["aws_secret_access_key"] = sk
+        api_key = model_cfg.get("bedrock_api_key") or model_cfg.get("api_key")
+        if auth_mode == "api_key" and api_key:
+            return _invoke_bedrock_api_key(model_id, region, api_key, prompt, logger)
+        client = boto3.client("bedrock-runtime", **client_kwargs)
+        response = client.converse(
+            modelId=model_id,
+            messages=[{"role": "user", "content": [{"text": prompt}]}],
+            inferenceConfig={"maxTokens": 1024, "temperature": 0.2},
+        )
+        text = ""
+        for block in response.get("output", {}).get("message", {}).get("content", []):
+            if "text" in block:
+                text += block["text"]
+        return text or "{}"
+
+
+def get_dimension_fix(subject: str, html_body: str, dimension: str, issues: list, selected_model_id: str = None) -> dict:
+    """获取单个维度的 AI 修复建议和代码示例"""
+    import json
+    import logging
+    from core.config import BEDROCK_MODEL_ID, BEDROCK_REGION
+    from core.database import SessionLocal
+
+    logger = logging.getLogger("ses-sender.ai")
+
+    model_cfg = {}
+    try:
+        from domain.settings.service import get_ai_model_by_id, get_ai_models, get_bedrock_config
+        _db = SessionLocal()
+        try:
+            if selected_model_id:
+                model_cfg = get_ai_model_by_id(_db, selected_model_id)
+            else:
+                models = get_ai_models(_db)
+                model_cfg = models[0] if models else {}
+            if not model_cfg:
+                db_cfg = get_bedrock_config(_db)
+                model_cfg = {"type": "bedrock", "model_id": db_cfg.get("model_id") or BEDROCK_MODEL_ID,
+                             "region": db_cfg.get("region") or BEDROCK_REGION, "auth_mode": db_cfg.get("auth_mode", "iam_role")}
+        finally:
+            _db.close()
+    except Exception:
+        pass
+
+    issues_text = "\n".join(f"- {i}" for i in issues) if issues else "(无具体问题)"
+
+    prompt = f"""Fix the "{dimension}" issues in this email.
+
+Issues:
+{issues_text}
+
+Subject: {subject}
+HTML (first 5000 chars):
+{html_body[:5000]}
+
+Respond in Chinese. Return ONLY valid JSON, no markdown:
+{{"fixes":[{{"issue":"问题","fix":"修复方法","code":"代码片段"}}],"key_changes":"总结"}}
+
+Keep {{{{variable}}}} unchanged. Provide concrete code fixes."""
+
+    try:
+        ai_text = _call_ai_model(model_cfg, prompt, logger)
+        try:
+            return json.loads(ai_text.strip().strip("`").strip())
+        except json.JSONDecodeError:
+            import re
+            fixes = []
+            fix_pattern = re.findall(r'"issue"\s*:\s*"([^"]*)".*?"fix"\s*:\s*"([^"]*)"', ai_text, re.DOTALL)
+            for issue, fix in fix_pattern[:5]:
+                fixes.append({"issue": issue, "fix": fix, "code": ""})
+            code_blocks = re.findall(r'"code"\s*:\s*"([^"]{10,})"', ai_text)
+            for i, code in enumerate(code_blocks):
+                if i < len(fixes):
+                    fixes[i]["code"] = code.replace("\\n", "\n").replace('\\"', '"')
+            key_changes = ""
+            kc_match = re.search(r'"key_changes"\s*:\s*"([^"]*)"', ai_text)
+            if kc_match:
+                key_changes = kc_match.group(1)
+            return {"fixes": fixes or [{"issue": "AI 返回格式异常", "fix": ai_text[:200], "code": ""}], "key_changes": key_changes}
+    except Exception as e:
+        logger.error(f"[AI Fix] {dimension} failed: {e}")
+        raise HTTPException(status_code=500, detail=f"获取修复建议失败: {str(e)[:100]}")

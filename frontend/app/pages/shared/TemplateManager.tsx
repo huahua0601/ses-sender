@@ -76,6 +76,12 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
   const [showAiPrompt,setShowAiPrompt]=useState(false);
   const [aiPrompt,setAiPrompt]=useState("");
   const [aiImages,setAiImages]=useState<{url:string;name:string}[]>([]);
+  const [aiModels,setAiModels]=useState<{id:string;name:string;provider_name:string;provider_type:string}[]>([]);
+  const [selectedModel,setSelectedModel]=useState("");
+
+  useEffect(()=>{
+    fetch(`${API}/ai-models/available`,{headers:authH(token)}).then(r=>r.json()).then(d=>{if(Array.isArray(d))setAiModels(d);}).catch(()=>{});
+  },[]);
 
   const uploadAiImage=async(file:File)=>{
     const fd=new FormData();fd.append("file",file);
@@ -100,6 +106,7 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
       if(prompt) payload.user_feedback = prompt;
       const imgUrls = aiImages.map(i=>i.url);
       if(imgUrls.length>0) payload.images = imgUrls;
+      if(selectedModel) payload.model_id = selectedModel;
       const r=await fetch(`${API}/ai/optimize-template`,{method:"POST",headers:authH(token),body:JSON.stringify(payload)});
       const d=await r.json();
       if(r.ok){setAiResult(d);setShowAi(true);setAiFeedback("");setAiPrompt("");setAiImages([]);}
@@ -112,6 +119,45 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
   };
 
   const [showAi,setShowAi]=useState(false);
+  const [evalLoading,setEvalLoading]=useState(false);
+  const [evalResult,setEvalResult]=useState<any>(null);
+  const [showEval,setShowEval]=useState(false);
+  const [showEvalPanel,setShowEvalPanel]=useState(false);
+  const [evalModels,setEvalModels]=useState<string[]>([]);
+  const [evalTab,setEvalTab]=useState(0);
+  const [fixLoading,setFixLoading]=useState("");
+  const [fixResults,setFixResults]=useState<Record<string,any>>({});
+
+  const toggleEvalModel=(id:string)=>{
+    setEvalModels(prev=>prev.includes(id)?prev.filter(m=>m!==id):[...prev,id]);
+  };
+
+  const runEval=async()=>{
+    if(!f.html_body.trim()) return toast("warning","请先编写邮件内容");
+    setEvalLoading(true);setEvalResult(null);setFixResults({});setEvalTab(0);
+    try{
+      const payload:any={subject:f.subject,html_body:f.html_body};
+      if(evalModels.length>0) payload.model_ids=evalModels;
+      const r=await fetch(`${API}/ai/evaluate-template`,{method:"POST",headers:authH(token),body:JSON.stringify(payload)});
+      const d=await r.json();
+      if(r.ok){setEvalResult(d);setShowEval(true);}
+      else toast("error","评测失败",d.detail||"请检查 AI 配置");
+    }catch(e:any){toast("error","评测失败",e?.message||"网络错误");}
+    finally{setEvalLoading(false);}
+  };
+
+  const getDimFix=async(dim:any)=>{
+    setFixLoading(dim.name);
+    try{
+      const curModel=evalResult?.models?.[evalTab];
+      const payload:any={subject:f.subject,html_body:f.html_body,dimension:dim.name,issues:dim.issues||[]};
+      if(curModel?.model_id) payload.model_id=curModel.model_id;
+      const r=await fetch(`${API}/ai/dimension-fix`,{method:"POST",headers:authH(token),body:JSON.stringify(payload)});
+      if(r.ok){const d=await r.json();setFixResults(prev=>({...prev,[`${evalResult?.models?.[evalTab]?.model_id}_${dim.name}`]:d}));}
+      else{const e=await r.json();toast("error","获取建议失败",e.detail);}
+    }catch{toast("error","网络错误");}
+    finally{setFixLoading("");}
+  };
 
   const load=async()=>{const d=await(await fetch(`${API}${apiPrefix}`,{headers:authH(token)})).json();setList(Array.isArray(d)?d:[]);}; useEffect(()=>{load();},[]);
 
@@ -246,6 +292,13 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
             onDragOver={e=>{e.preventDefault();e.stopPropagation();}}
             onDrop={e=>{e.preventDefault();e.stopPropagation();const files=e.dataTransfer?.files;if(files)for(let i=0;i<files.length;i++){if(files[i].type.startsWith("image/"))uploadAiImage(files[i]);}}}
           >
+            {aiModels.length>1&&<div className="mb-3">
+              <label className="text-xs font-medium text-gray-600 mb-1 block">选择模型</label>
+              <select value={selectedModel} onChange={e=>setSelectedModel(e.target.value)} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-purple-400">
+                <option value="">默认模型</option>
+                {(()=>{const groups=new Map<string,typeof aiModels>();aiModels.forEach(m=>{const k=m.provider_name||m.provider_type;if(!groups.has(k))groups.set(k,[]);groups.get(k)!.push(m);});return [...groups.entries()].map(([g,ms])=><optgroup key={g} label={`${ms[0]?.provider_type==="bedrock"?"☁️":"🔗"} ${g}`}>{ms.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</optgroup>);})()}
+              </select>
+            </div>}
             <p className="text-sm font-medium text-gray-700 mb-2">优化提示词 <span className="text-gray-400 font-normal">（可选）</span></p>
             <textarea
               value={aiPrompt}
@@ -271,6 +324,25 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
             <div className="flex justify-end gap-2 mt-2">
               <Btn variant="outline" size="sm" onClick={()=>{setShowAiPrompt(false);setAiImages([]);}}>取消</Btn>
               <Btn size="sm" onClick={()=>aiOptimize()} className="bg-purple-600 hover:bg-purple-700 text-white">开始优化</Btn>
+            </div>
+          </div>}
+        </div>
+        <div className="relative">
+          <Btn variant="outline" onClick={()=>{if(evalLoading)return;if(aiModels.length>1)setShowEvalPanel(!showEvalPanel);else runEval();}} disabled={evalLoading} className="border-cyan-300 text-cyan-600 hover:bg-cyan-50">
+            {evalLoading?"评测中...":"📊 AI 评测"}
+          </Btn>
+          {showEvalPanel&&aiModels.length>1&&!evalLoading&&<div className="absolute right-0 top-full mt-2 w-72 bg-white border border-cyan-200 rounded-xl shadow-xl p-3 z-50">
+            <p className="text-xs font-medium text-gray-700 mb-2">选择评测模型（可多选）</p>
+            <div className="space-y-1 max-h-40 overflow-y-auto">{aiModels.map(m=>(
+              <label key={m.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-cyan-50 cursor-pointer">
+                <input type="checkbox" className="rounded accent-cyan-500" checked={evalModels.includes(m.id)} onChange={()=>toggleEvalModel(m.id)}/>
+                <span className="text-xs">{m.provider_type==="bedrock"?"☁️":"🔗"}</span>
+                <span className="text-sm text-gray-700">{m.name}</span>
+              </label>
+            ))}</div>
+            <div className="flex justify-end gap-2 mt-2 pt-2 border-t border-gray-100">
+              <button onClick={()=>setEvalModels(aiModels.map(m=>m.id))} className="text-xs text-cyan-600">全选</button>
+              <Btn size="sm" onClick={()=>{setShowEvalPanel(false);runEval();}} className="bg-cyan-500 hover:bg-cyan-600 text-white">开始评测</Btn>
             </div>
           </div>}
         </div>
@@ -317,18 +389,86 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
           <textarea
             value={aiFeedback}
             onChange={e=>setAiFeedback(e.target.value)}
-            placeholder="输入您的修改建议，例如：主题需要更简洁、正文语气更正式、增加促销力度..."
+            onPaste={e=>{const items=e.clipboardData?.items;if(items)for(let i=0;i<items.length;i++){if(items[i].type.startsWith("image/")){e.preventDefault();const file=items[i].getAsFile();if(file)uploadAiImage(file);return;}}}}
+            placeholder="输入修改建议，支持粘贴图片 (Ctrl+V)..."
             className="w-full border border-amber-200 rounded-lg p-3 text-sm resize-none outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-300"
             rows={3}
           />
+          {aiImages.length>0&&<div className="flex flex-wrap gap-2 mt-2">
+            {aiImages.map((img,i)=><div key={i} className="relative group">
+              <img src={img.url.startsWith("http")?img.url:`${API}${img.url}`} alt={img.name} className="w-14 h-14 object-cover rounded-lg border border-amber-200"/>
+              <button onClick={()=>setAiImages(prev=>prev.filter((_,j)=>j!==i))} className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white rounded-full text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition">x</button>
+            </div>)}
+          </div>}
           <div className="flex justify-end mt-2">
             <Btn
               onClick={()=>aiOptimize(aiFeedback)}
-              disabled={aiLoading||!aiFeedback.trim()}
+              disabled={aiLoading||(!aiFeedback.trim()&&aiImages.length===0)}
               className="bg-amber-500 hover:bg-amber-600 text-white disabled:opacity-50"
             >{aiLoading?"AI 重新优化中...":"🔄 基于建议再次优化"}</Btn>
           </div>
         </div>
+      </div>}
+    </Modal>
+
+    {/* AI 评测结果 */}
+    <Modal open={showEval} onClose={()=>setShowEval(false)} title="📊 AI 邮件评测报告" width={900}>
+      {evalResult?.models&&<div className="space-y-4 max-h-[75vh] overflow-y-auto">
+        {/* 多模型对比综合分 */}
+        {evalResult.models.length>1&&<div className="flex gap-4 justify-center py-3">
+          {evalResult.models.map((m:any,i:number)=>(
+            <button key={i} onClick={()=>setEvalTab(i)} className={`text-center p-3 rounded-xl border-2 min-w-[120px] transition ${evalTab===i?"border-indigo-400 bg-indigo-50":"border-gray-200 hover:border-gray-300"}`}>
+              <div className="inline-flex items-center justify-center w-14 h-14 rounded-full border-3 mb-1" style={{borderColor:m.overall_score>=80?"#10B981":m.overall_score>=60?"#F59E0B":"#EF4444"}}>
+                <span className="text-xl font-bold" style={{color:m.overall_score>=80?"#10B981":m.overall_score>=60?"#F59E0B":"#EF4444"}}>{m.overall_score}</span>
+              </div>
+              <p className="text-xs text-gray-600 font-medium truncate">{m.model_name}</p>
+            </button>
+          ))}
+        </div>}
+
+        {/* 单模型详情 */}
+        {evalResult.models.length===1&&<div className="text-center py-3">
+          <div className="inline-flex items-center justify-center w-24 h-24 rounded-full border-4" style={{borderColor:evalResult.models[0].overall_score>=80?"#10B981":evalResult.models[0].overall_score>=60?"#F59E0B":"#EF4444"}}>
+            <span className="text-3xl font-bold" style={{color:evalResult.models[0].overall_score>=80?"#10B981":evalResult.models[0].overall_score>=60?"#F59E0B":"#EF4444"}}>{evalResult.models[0].overall_score}</span>
+          </div>
+          <p className="text-sm text-gray-500 mt-1">{evalResult.models[0].model_name}</p>
+        </div>}
+
+        {/* 当前模型维度详情 */}
+        {(()=>{
+          const cur=evalResult.models[evalTab];
+          if(!cur) return null;
+          return <div className="grid grid-cols-2 gap-3">
+            {(cur.dimensions||[]).map((d:any,i:number)=>{
+              const color=d.score>=80?"#10B981":d.score>=60?"#F59E0B":"#EF4444";
+              const fixKey=`${cur.model_id}_${d.name}`;
+              const fix=fixResults[fixKey];
+              return <div key={i} className="border border-gray-200 rounded-xl p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-medium text-gray-700">{d.name}</span>
+                  <div className="flex items-center gap-2">
+                    {evalResult.models.length>1&&<div className="flex gap-0.5">{evalResult.models.map((m2:any,j:number)=>{const d2=m2.dimensions?.find((x:any)=>x.name===d.name);return d2?<span key={j} className="text-xs px-1 rounded" style={{background:d2.score>=80?"#ECFDF5":d2.score>=60?"#FFFBEB":"#FEF2F2",color:d2.score>=80?"#10B981":d2.score>=60?"#F59E0B":"#EF4444"}}>{d2.score}</span>:null;})}</div>}
+                    <span className="text-lg font-bold" style={{color}}>{d.score}</span>
+                    {d.issues?.length>0&&!fix&&<button onClick={()=>{setFixLoading(fixKey);getDimFix(d).then(()=>setFixLoading(""));}} disabled={fixLoading===fixKey} className="text-xs text-indigo-600 border border-indigo-200 rounded-lg px-2 py-0.5 hover:bg-indigo-50">{fixLoading===fixKey?"...":"✨ AI建议"}</button>}
+                  </div>
+                </div>
+                <div className="h-2 bg-gray-100 rounded-full overflow-hidden mb-2"><div className="h-full rounded-full" style={{width:`${d.score}%`,background:color}}/></div>
+                {d.issues?.length>0&&<div className="space-y-1">{d.issues.map((issue:string,j:number)=><p key={j} className="text-xs text-red-500 flex gap-1"><span>✗</span><span>{issue}</span></p>)}</div>}
+                {d.suggestions?.length>0&&<div className="space-y-1 mt-1">{d.suggestions.map((s:string,j:number)=><p key={j} className="text-xs text-green-600 flex gap-1"><span>→</span><span>{s}</span></p>)}</div>}
+                {fix&&<div className="mt-2 bg-indigo-50 border border-indigo-200 rounded-lg p-3 space-y-2">
+                  <p className="text-xs font-semibold text-indigo-700">AI 修复建议</p>
+                  {fix.key_changes&&<p className="text-xs text-indigo-600">{fix.key_changes}</p>}
+                  {(fix.fixes||[]).map((fx:any,j:number)=><div key={j} className="space-y-1">
+                    <p className="text-xs text-gray-700"><strong>{fx.issue}</strong>: {fx.fix}</p>
+                    {fx.code&&<pre className="text-xs bg-gray-900 text-green-400 rounded-lg p-2 overflow-x-auto whitespace-pre-wrap max-h-32">{fx.code}</pre>}
+                  </div>)}
+                </div>}
+              </div>;
+            })}
+          </div>;
+        })()}
+
+        <div className="flex justify-end pt-2"><Btn variant="outline" onClick={()=>setShowEval(false)}>关闭</Btn></div>
       </div>}
     </Modal>
 

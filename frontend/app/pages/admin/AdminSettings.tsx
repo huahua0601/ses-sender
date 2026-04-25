@@ -52,52 +52,121 @@ function useSettings() {
 }
 
 function AiSettings() {
-  const {token,toast,loading,saving,f,setF,save}=useSettings();
-  const [testing,setTesting]=useState(false);
+  const {token}=useAuth(); const {toast}=useToast();
+  const [providers,setProviders]=useState<any[]>([]);
+  const [loading,setLoading]=useState(true);
+  const [saving,setSaving]=useState(false);
+  const [expandIdx,setExpandIdx]=useState<number|null>(null);
   const [testResult,setTestResult]=useState<any>(null);
+  const [testingModel,setTestingModel]=useState("");
 
-  const doSave=()=>{
-    const p:any={ai_provider:f.ai_provider,bedrock_model_id:f.bedrock_model_id,bedrock_region:f.bedrock_region,bedrock_auth_mode:f.bedrock_auth_mode};
-    if(f.bedrock_access_key)p.bedrock_access_key=f.bedrock_access_key;
-    if(f.bedrock_secret_key)p.bedrock_secret_key=f.bedrock_secret_key;
-    if(f.bedrock_api_key)p.bedrock_api_key=f.bedrock_api_key;
-    save(p);
+  useEffect(()=>{(async()=>{try{const r=await fetch(`${API}/admin/ai-models`,{headers:authH(token)});if(r.ok)setProviders(await r.json());}catch{}finally{setLoading(false);}})();},[]);
+
+  const saveAll=async(list?:any[])=>{
+    setSaving(true);
+    try{const r=await fetch(`${API}/admin/ai-models`,{method:"PUT",headers:authH(token),body:JSON.stringify({models:list||providers})});if(r.ok)toast("success","已保存");else{const e=await r.json();toast("error","失败",e.detail);}}catch{toast("error","网络错误");}finally{setSaving(false);}
   };
-  const test=async()=>{
-    setTesting(true);setTestResult(null);
-    try{
-      const body:any={bedrock_auth_mode:f.bedrock_auth_mode,bedrock_model_id:f.bedrock_model_id,bedrock_region:f.bedrock_region};
-      if(f.bedrock_access_key)body.bedrock_access_key=f.bedrock_access_key;
-      if(f.bedrock_secret_key)body.bedrock_secret_key=f.bedrock_secret_key;
-      if(f.bedrock_api_key)body.bedrock_api_key=f.bedrock_api_key;
-      const r=await fetch(`${API}/admin/settings/test-bedrock`,{method:"POST",headers:authH(token),body:JSON.stringify(body)});
-      const d=await r.json();setTestResult(d);
-      if(d.success)toast("success","连通性测试通过");else toast("error","测试失败",d.error);
-    }catch{toast("error","网络错误");}finally{setTesting(false);}
+
+  const addProvider=(type:string)=>{
+    const p:any={id:`p_${Date.now()}`,type,name:type==="bedrock"?"AWS Bedrock":"",models:[]};
+    if(type==="bedrock"){p.region="us-east-1";p.auth_mode="iam_role";}else{p.api_base="";p.api_key="";}
+    setProviders([...providers,p]);setExpandIdx(providers.length);
   };
-  const clearCred=(type:string)=>{
-    const keys=type==="ak_sk"?{bedrock_access_key:"__CLEAR__",bedrock_secret_key:"__CLEAR__"}:{bedrock_api_key:"__CLEAR__"};
-    (async()=>{await fetch(`${API}/admin/settings`,{method:"PUT",headers:authH(token),body:JSON.stringify(keys)});setF((p:any)=>({...p,...(type==="ak_sk"?{bedrock_access_key:"",bedrock_has_ak_sk:false}:{bedrock_api_key:"",bedrock_has_api_key:false})}));toast("success","凭证已清除");})();
+  const updateProvider=(idx:number,field:string,val:any)=>{const np=[...providers];np[idx]={...np[idx],[field]:val};setProviders(np);};
+  const removeProvider=(idx:number)=>{setProviders(providers.filter((_,i)=>i!==idx));setExpandIdx(null);};
+
+  const addModel=(pIdx:number)=>{
+    const np=[...providers];
+    const models=[...(np[pIdx].models||[])];
+    const m:any={id:`m_${Date.now()}`,name:""};
+    if(np[pIdx].type==="bedrock") m.model_id=""; else m.model="";
+    models.push(m);np[pIdx]={...np[pIdx],models};setProviders(np);
+  };
+  const updateModel=(pIdx:number,mIdx:number,field:string,val:string)=>{
+    const np=[...providers];const models=[...(np[pIdx].models||[])];models[mIdx]={...models[mIdx],[field]:val};np[pIdx]={...np[pIdx],models};setProviders(np);
+  };
+  const removeModel=(pIdx:number,mIdx:number)=>{
+    const np=[...providers];np[pIdx]={...np[pIdx],models:np[pIdx].models.filter((_:any,i:number)=>i!==mIdx)};setProviders(np);
+  };
+
+  const testModel=async(pIdx:number,mIdx:number)=>{
+    const p=providers[pIdx];const m=p.models[mIdx];
+    const mid=m.id;setTestingModel(mid);setTestResult(null);
+    const body:any={...p,test_model:m.model_id||m.model};delete body.models;
+    try{const r=await fetch(`${API}/admin/ai-models/test`,{method:"POST",headers:authH(token),body:JSON.stringify(body)});const d=await r.json();setTestResult({mid,...d});if(d.success)toast("success","测试通过");else toast("error","测试失败",d.error);}catch{toast("error","网络错误");}finally{setTestingModel("");}
   };
 
   if(loading) return <div className="flex items-center justify-center h-32 text-gray-400">加载中...</div>;
-  const curMode=AUTH_MODES.find(m=>m.id===f.bedrock_auth_mode)||AUTH_MODES[0];
 
-  return <div className="max-w-3xl"><Card title="AI 模型配置"><div className="space-y-5">
-    <div><label className="text-sm font-medium text-gray-700 mb-1.5 block">模型提供商</label><Select value={f.ai_provider||"bedrock"} onChange={(e:any)=>setF({...f,ai_provider:e.target.value})}><option value="bedrock">AWS Bedrock</option></Select></div>
-    <div className="grid grid-cols-2 gap-4">
-      <div><label className="text-sm font-medium text-gray-700 mb-1.5 block">模型 ID</label><Input placeholder="global.anthropic.claude-opus-4-6-v1" value={f.bedrock_model_id||""} onChange={(e:any)=>setF({...f,bedrock_model_id:e.target.value})}/><p className="text-xs text-gray-400 mt-1">Bedrock 模型标识符</p></div>
-      <div><label className="text-sm font-medium text-gray-700 mb-1.5 block">区域</label><Select value={f.bedrock_region||""} onChange={(e:any)=>setF({...f,bedrock_region:e.target.value})}><option value="">使用环境默认</option>{REGIONS.map(r=><option key={r} value={r}>{r}</option>)}</Select></div>
+  return <div className="max-w-4xl space-y-4">
+    <div className="flex items-center justify-between">
+      <h3 className="text-sm font-medium text-gray-600">AI Provider 列表</h3>
+      <div className="flex gap-2">
+        <Btn size="sm" onClick={()=>addProvider("bedrock")} className="bg-orange-500 hover:bg-orange-600 text-white">+ AWS Bedrock</Btn>
+        <Btn size="sm" onClick={()=>addProvider("openai_compatible")} className="bg-blue-500 hover:bg-blue-600 text-white">+ OpenAI 兼容</Btn>
+      </div>
     </div>
-    <div className="border-t border-gray-100 pt-4"><label className="text-sm font-medium text-gray-700 mb-3 block">认证方式</label>
-      <div className="grid grid-cols-3 gap-3">{AUTH_MODES.map(m=><button key={m.id} onClick={()=>setF({...f,bedrock_auth_mode:m.id})} className={`p-3 rounded-xl border-2 text-left transition ${f.bedrock_auth_mode===m.id?`border-${m.color}-400 bg-${m.color}-50`:"border-gray-200 hover:border-gray-300"}`}><div className="flex items-center gap-2 mb-1"><span className={`w-3 h-3 rounded-full ${f.bedrock_auth_mode===m.id?`bg-${m.color}-500`:"bg-gray-300"}`}/><span className="text-sm font-semibold text-gray-800">{m.label}</span></div><p className="text-xs text-gray-500 leading-relaxed">{m.desc}</p></button>)}</div>
-    </div>
-    {f.bedrock_auth_mode==="ak_sk"&&<div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-3"><h4 className="text-sm font-semibold text-blue-800">AWS AK/SK 凭证</h4><div className="grid grid-cols-2 gap-3"><div><label className="text-xs font-medium text-gray-600 mb-1 block">Access Key ID</label><Input placeholder={f.bedrock_has_ak_sk?"已配置（留空不修改）":"AKIA..."} value={f.bedrock_access_key||""} onChange={(e:any)=>setF({...f,bedrock_access_key:e.target.value})}/></div><div><label className="text-xs font-medium text-gray-600 mb-1 block">Secret Access Key</label><Input type="password" placeholder={f.bedrock_has_ak_sk?"已配置（留空不修改）":"wJalr..."} value={f.bedrock_secret_key||""} onChange={(e:any)=>setF({...f,bedrock_secret_key:e.target.value})}/></div></div>{f.bedrock_has_ak_sk&&!f.bedrock_secret_key&&<button onClick={()=>clearCred("ak_sk")} className="text-xs text-red-500 hover:text-red-700 underline">清除已保存的 AK/SK</button>}</div>}
-    {f.bedrock_auth_mode==="api_key"&&<div className="bg-purple-50 border border-purple-200 rounded-xl p-4 space-y-3"><h4 className="text-sm font-semibold text-purple-800">Bedrock API Key</h4><p className="text-xs text-gray-500">在 <a href="https://console.aws.amazon.com/bedrock/home#/api-keys" target="_blank" rel="noopener" className="text-purple-600 underline">Bedrock 控制台 → API Keys</a> 生成</p><Input type="password" placeholder={f.bedrock_has_api_key?"已配置（留空不修改）":"输入 Bedrock API Key"} value={f.bedrock_api_key||""} onChange={(e:any)=>setF({...f,bedrock_api_key:e.target.value})}/>{f.bedrock_has_api_key&&!f.bedrock_api_key&&<button onClick={()=>clearCred("api_key")} className="text-xs text-red-500 hover:text-red-700 underline">清除已保存的 API Key</button>}</div>}
-    {f.bedrock_auth_mode==="iam_role"&&<div className="bg-green-50 border border-green-200 rounded-xl p-4"><p className="text-sm text-green-800">使用 EC2 实例绑定的 IAM Role 调用 Bedrock，无需配置密钥。</p><p className="text-xs text-green-600 mt-1">确保 IAM Role 包含 <code className="bg-green-100 px-1 rounded">bedrock:InvokeModel</code> 权限。</p></div>}
-    <div className="flex items-center gap-3 pt-2 border-t border-gray-100"><Btn onClick={doSave} disabled={saving}>{saving?"保存中...":"保存配置"}</Btn><Btn variant="outline" onClick={test} disabled={testing}>{testing?"测试中...":"测试连通性"}</Btn><Badge color={curMode.color as any}>{curMode.label}</Badge></div>
-    {testResult&&<div className={`rounded-xl p-4 border ${testResult.success?"bg-green-50 border-green-200":"bg-red-50 border-red-200"}`}><div className="flex items-center gap-2 mb-2"><span className="text-lg">{testResult.success?"✅":"❌"}</span><span className={`text-sm font-semibold ${testResult.success?"text-green-700":"text-red-700"}`}>{testResult.success?"连通性测试通过":"连通性测试失败"}</span></div><div className="text-xs space-y-1 text-gray-600"><p>认证方式: <span className="font-medium">{testResult.auth_mode}</span></p><p>模型: <span className="font-mono">{testResult.model_id}</span></p><p>区域: <span className="font-mono">{testResult.region}</span></p>{testResult.reply&&<p>AI 回复: <span className="text-green-700 font-medium">{testResult.reply}</span></p>}{testResult.error&&<p className="text-red-600 break-all">错误: {testResult.error}</p>}</div></div>}
-  </div></Card></div>;
+
+    {providers.length===0&&<Card><p className="text-center py-8 text-sm text-gray-400">暂未配置 AI Provider，点击上方按钮添加</p></Card>}
+
+    {providers.map((p,pi)=><Card key={p.id}>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3 cursor-pointer flex-1" onClick={()=>setExpandIdx(expandIdx===pi?null:pi)}>
+          <span className="text-lg">{p.type==="bedrock"?"☁️":"🔗"}</span>
+          <Badge color={p.type==="bedrock"?"orange":"blue"}>{p.type==="bedrock"?"Bedrock":"OpenAI"}</Badge>
+          <span className="text-sm font-semibold text-gray-800">{p.name||"(未命名)"}</span>
+          <span className="text-xs text-gray-400">{(p.models||[]).length} 个模型</span>
+          <span className="text-xs text-gray-300">{expandIdx===pi?"▼":"▶"}</span>
+        </div>
+        <Btn size="sm" variant="danger" onClick={()=>removeProvider(pi)}>删除</Btn>
+      </div>
+
+      {expandIdx===pi&&<div className="mt-4 space-y-4 border-t border-gray-100 pt-4">
+        {/* Provider 配置 */}
+        <div className="grid grid-cols-3 gap-3">
+          <div><label className="text-xs font-medium text-gray-600 mb-1 block">Provider 名称</label><Input value={p.name||""} onChange={(e:any)=>updateProvider(pi,"name",e.target.value)} placeholder={p.type==="bedrock"?"AWS Bedrock":"My LiteLLM"}/></div>
+          {p.type==="bedrock"&&<>
+            <div><label className="text-xs font-medium text-gray-600 mb-1 block">区域</label><Select value={p.region||""} onChange={(e:any)=>updateProvider(pi,"region",e.target.value)}><option value="">默认</option>{REGIONS.map(r=><option key={r} value={r}>{r}</option>)}</Select></div>
+            <div><label className="text-xs font-medium text-gray-600 mb-1 block">认证方式</label><Select value={p.auth_mode||"iam_role"} onChange={(e:any)=>updateProvider(pi,"auth_mode",e.target.value)}><option value="iam_role">IAM Role</option><option value="ak_sk">AK/SK</option><option value="api_key">Bedrock API Key</option></Select></div>
+          </>}
+          {p.type==="openai_compatible"&&<>
+            <div><label className="text-xs font-medium text-gray-600 mb-1 block">API Base URL</label><Input value={p.api_base||""} onChange={(e:any)=>updateProvider(pi,"api_base",e.target.value)} placeholder="https://api.openai.com/v1"/></div>
+            <div><label className="text-xs font-medium text-gray-600 mb-1 block">API Key</label><Input type="password" value={p.api_key||""} onChange={(e:any)=>updateProvider(pi,"api_key",e.target.value)} placeholder="可选"/></div>
+          </>}
+        </div>
+        {p.type==="bedrock"&&p.auth_mode==="ak_sk"&&<div className="grid grid-cols-2 gap-3">
+          <div><label className="text-xs font-medium text-gray-600 mb-1 block">Access Key</label><Input value={p.access_key||""} onChange={(e:any)=>updateProvider(pi,"access_key",e.target.value)}/></div>
+          <div><label className="text-xs font-medium text-gray-600 mb-1 block">Secret Key</label><Input type="password" value={p.secret_key||""} onChange={(e:any)=>updateProvider(pi,"secret_key",e.target.value)}/></div>
+        </div>}
+        {p.type==="bedrock"&&p.auth_mode==="api_key"&&<div><label className="text-xs font-medium text-gray-600 mb-1 block">Bedrock API Key</label><Input type="password" value={p.bedrock_api_key||""} onChange={(e:any)=>updateProvider(pi,"bedrock_api_key",e.target.value)}/></div>}
+
+        {/* 模型列表 */}
+        <div className="border-t border-gray-100 pt-3">
+          <div className="flex items-center justify-between mb-2">
+            <label className="text-xs font-semibold text-gray-700">模型列表</label>
+            <button onClick={()=>addModel(pi)} className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">+ 添加模型</button>
+          </div>
+          {(p.models||[]).length===0&&<p className="text-xs text-gray-400 py-2">暂无模型，点击上方添加</p>}
+          <div className="space-y-2">{(p.models||[]).map((m:any,mi:number)=>(
+            <div key={m.id} className="bg-gray-50 rounded-lg px-3 py-2 space-y-2">
+              <div className="grid grid-cols-12 gap-2 items-center">
+                <span className="text-xs text-gray-400 col-span-1 text-center">{mi+1}</span>
+                <div className="col-span-3"><Input value={m.name||""} onChange={(e:any)=>updateModel(pi,mi,"name",e.target.value)} placeholder="显示名称"/></div>
+                <div className="col-span-5"><Input value={p.type==="bedrock"?(m.model_id||""):(m.model||"")} onChange={(e:any)=>updateModel(pi,mi,p.type==="bedrock"?"model_id":"model",e.target.value)} placeholder={p.type==="bedrock"?"模型 ID（如 global.anthropic.claude-opus-4-6-v1）":"模型名称（如 gpt-4o）"} className="font-mono text-xs"/></div>
+                <div className="col-span-3 flex items-center gap-1">
+                  <Btn size="sm" variant="outline" onClick={()=>testModel(pi,mi)} disabled={testingModel===m.id}>{testingModel===m.id?"...":"测试"}</Btn>
+                  <button onClick={()=>removeModel(pi,mi)} className="text-red-400 hover:text-red-600 text-lg px-1">×</button>
+                  {testResult?.mid===m.id&&<span className={`text-xs truncate ${testResult.success?"text-green-600":"text-red-500"}`}>{testResult.success?"✓ "+testResult.reply:"✗ "+(testResult.error||"").slice(0,30)}</span>}
+                </div>
+              </div>
+            </div>
+          ))}</div>
+        </div>
+      </div>}
+    </Card>)}
+
+    <div className="flex gap-3 pt-2"><Btn onClick={()=>saveAll()} disabled={saving}>{saving?"保存中...":"保存全部配置"}</Btn><span className="text-xs text-gray-400 self-center">{providers.length} 个 Provider，{providers.reduce((s:number,p:any)=>s+(p.models||[]).length,0)} 个模型</span></div>
+  </div>;
 }
 
 function ImageSettings() {

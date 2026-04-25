@@ -30,3 +30,18 @@ class OptimizeRequest(BaseModel):
     html_body: str
     user_feedback: Optional[str] = None
     images: Optional[list[str]] = None
+    model_id: Optional[str] = None
+
+
+class EvaluateRequest(BaseModel):
+    subject: str
+    html_body: str
+    model_ids: Optional[list[str]] = None
+
+
+class DimensionFixRequest(BaseModel):
+    subject: str
+    html_body: str
+    dimension: str
+    issues: list[str]
+    model_id: Optional[str] = None
