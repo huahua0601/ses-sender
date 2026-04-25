@@ -12,17 +12,18 @@ const AUTH_MODES=[
 const REGIONS=["us-east-1","us-west-2","eu-west-1","eu-central-1","ap-northeast-1","ap-southeast-1","ap-southeast-2","ap-south-1"];
 
 export default function AdminSettings() {
-  const [subTab,setSubTab]=useState<"ai"|"image"|"unsub">("ai");
+  const [subTab,setSubTab]=useState<"ai"|"image"|"unsub"|"sso">("ai");
 
   return <div>
     <div className="flex gap-1 mb-5 bg-gray-100 rounded-lg p-1 w-fit">
-      {([["ai","AI 模型"],["image","图片存储"],["unsub","退订页面"]] as const).map(([id,label])=>(
+      {([["ai","AI 模型"],["image","图片存储"],["unsub","退订页面"],["sso","SSO 登录"]] as const).map(([id,label])=>(
         <button key={id} onClick={()=>setSubTab(id)} className={`px-5 py-2 text-sm rounded-md transition-all ${subTab===id?"bg-white text-indigo-600 shadow-sm font-medium":"text-gray-500 hover:text-gray-700"}`}>{label}</button>
       ))}
     </div>
     {subTab==="ai"&&<AiSettings/>}
     {subTab==="image"&&<ImageSettings/>}
     {subTab==="unsub"&&<UnsubSettings/>}
+    {subTab==="sso"&&<SsoSettings/>}
   </div>;
 }
 
@@ -213,4 +214,70 @@ function UnsubSettings() {
   if(loading) return <div className="flex items-center justify-center h-32 text-gray-400">加载中...</div>;
 
   return <UnsubPageEditor f={form} setF={setForm} onSave={doSave} saving={saving} title="退订页面默认配置" description={'设置退订页面的全局默认值。用户可在自己的「退订管理」中覆盖这些设置。'}/>;
+}
+
+function SsoSettings() {
+  const {token,toast,loading,saving,f,setF,save}=useSettings();
+
+  const doSave=()=>save({
+    sso_github_enabled:f.sso_github_enabled,sso_github_client_id:f.sso_github_client_id,
+    ...(f.sso_github_client_secret?{sso_github_client_secret:f.sso_github_client_secret}:{}),
+    sso_google_enabled:f.sso_google_enabled,sso_google_client_id:f.sso_google_client_id,
+    ...(f.sso_google_client_secret?{sso_google_client_secret:f.sso_google_client_secret}:{}),
+    sso_saml_enabled:f.sso_saml_enabled,sso_saml_idp_entity_id:f.sso_saml_idp_entity_id,
+    sso_saml_idp_sso_url:f.sso_saml_idp_sso_url,sso_saml_idp_cert:f.sso_saml_idp_cert,
+    sso_saml_sp_entity_id:f.sso_saml_sp_entity_id,
+  });
+
+  if(loading) return <div className="flex items-center justify-center h-32 text-gray-400">加载中...</div>;
+
+  const Toggle=({label,checked,onChange}:{label:string;checked:boolean;onChange:(v:boolean)=>void})=>(
+    <label className="flex items-center gap-3 cursor-pointer">
+      <div className={`w-10 h-6 rounded-full transition relative ${checked?"bg-indigo-500":"bg-gray-300"}`} onClick={()=>onChange(!checked)}>
+        <div className={`w-4 h-4 rounded-full bg-white absolute top-1 transition ${checked?"left-5":"left-1"}`}/>
+      </div>
+      <span className="text-sm font-medium text-gray-700">{label}</span>
+    </label>
+  );
+
+  return <div className="max-w-3xl space-y-6">
+    <Card title="GitHub OAuth2">
+      <div className="space-y-4">
+        <Toggle label="启用 GitHub 登录" checked={f.sso_github_enabled==="true"} onChange={v=>setF({...f,sso_github_enabled:v?"true":"false"})}/>
+        {f.sso_github_enabled==="true"&&<div className="grid grid-cols-2 gap-4">
+          <div><label className="text-xs font-medium text-gray-600 mb-1 block">Client ID</label><Input value={f.sso_github_client_id||""} onChange={(e:any)=>setF({...f,sso_github_client_id:e.target.value})} placeholder="Iv1.xxx"/></div>
+          <div><label className="text-xs font-medium text-gray-600 mb-1 block">Client Secret</label><Input type="password" value={f.sso_github_client_secret||""} onChange={(e:any)=>setF({...f,sso_github_client_secret:e.target.value})} placeholder={f.sso_has_github_secret?"已配置":"xxx"}/></div>
+        </div>}
+        {f.sso_github_enabled==="true"&&<p className="text-xs text-gray-400">回调 URL 设置为: <code className="bg-gray-100 px-1 rounded">{typeof window!=="undefined"?window.location.origin:""}/api/sso/github/callback</code></p>}
+      </div>
+    </Card>
+
+    <Card title="Google OAuth2">
+      <div className="space-y-4">
+        <Toggle label="启用 Google 登录" checked={f.sso_google_enabled==="true"} onChange={v=>setF({...f,sso_google_enabled:v?"true":"false"})}/>
+        {f.sso_google_enabled==="true"&&<div className="grid grid-cols-2 gap-4">
+          <div><label className="text-xs font-medium text-gray-600 mb-1 block">Client ID</label><Input value={f.sso_google_client_id||""} onChange={(e:any)=>setF({...f,sso_google_client_id:e.target.value})} placeholder="xxx.apps.googleusercontent.com"/></div>
+          <div><label className="text-xs font-medium text-gray-600 mb-1 block">Client Secret</label><Input type="password" value={f.sso_google_client_secret||""} onChange={(e:any)=>setF({...f,sso_google_client_secret:e.target.value})} placeholder={f.sso_has_google_secret?"已配置":"GOCSPX-xxx"}/></div>
+        </div>}
+        {f.sso_google_enabled==="true"&&<p className="text-xs text-gray-400">授权重定向 URI: <code className="bg-gray-100 px-1 rounded">{typeof window!=="undefined"?window.location.origin:""}/api/sso/google/callback</code></p>}
+      </div>
+    </Card>
+
+    <Card title="SAML SSO（企业内部系统）">
+      <div className="space-y-4">
+        <Toggle label="启用 SAML 登录" checked={f.sso_saml_enabled==="true"} onChange={v=>setF({...f,sso_saml_enabled:v?"true":"false"})}/>
+        {f.sso_saml_enabled==="true"&&<>
+          <div className="grid grid-cols-2 gap-4">
+            <div><label className="text-xs font-medium text-gray-600 mb-1 block">IdP Entity ID</label><Input value={f.sso_saml_idp_entity_id||""} onChange={(e:any)=>setF({...f,sso_saml_idp_entity_id:e.target.value})} placeholder="https://idp.example.com/entity"/></div>
+            <div><label className="text-xs font-medium text-gray-600 mb-1 block">IdP SSO URL</label><Input value={f.sso_saml_idp_sso_url||""} onChange={(e:any)=>setF({...f,sso_saml_idp_sso_url:e.target.value})} placeholder="https://idp.example.com/sso"/></div>
+          </div>
+          <div><label className="text-xs font-medium text-gray-600 mb-1 block">IdP 证书 (PEM)</label><textarea value={f.sso_saml_idp_cert||""} onChange={(e:any)=>setF({...f,sso_saml_idp_cert:e.target.value})} placeholder="-----BEGIN CERTIFICATE-----" className="w-full border border-gray-200 rounded-lg p-3 text-xs font-mono resize-none outline-none focus:border-indigo-400" rows={4}/></div>
+          <div><label className="text-xs font-medium text-gray-600 mb-1 block">SP Entity ID</label><Input value={f.sso_saml_sp_entity_id||""} onChange={(e:any)=>setF({...f,sso_saml_sp_entity_id:e.target.value})} placeholder="ses-sender"/></div>
+          <p className="text-xs text-gray-400">ACS URL: <code className="bg-gray-100 px-1 rounded">{typeof window!=="undefined"?window.location.origin:""}/api/sso/saml/callback</code></p>
+        </>}
+      </div>
+    </Card>
+
+    <div className="flex gap-3"><Btn onClick={doSave} disabled={saving}>{saving?"保存中...":"保存 SSO 配置"}</Btn></div>
+  </div>;
 }

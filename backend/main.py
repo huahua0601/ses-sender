@@ -37,6 +37,7 @@ from domain.template.router import router as template_router
 from domain.audience.router import router as audience_router
 from domain.sending.router import router as sending_router
 from domain.settings.router import router as settings_router
+from domain.auth.sso import router as sso_router
 
 
 # --- Alembic 迁移检查 & 自动升级 ---
@@ -169,6 +170,7 @@ app.include_router(template_router)
 app.include_router(audience_router)
 app.include_router(sending_router)
 app.include_router(settings_router)
+app.include_router(sso_router)
 
 
 # --- SQS 后台轮询线程（替代 Webhook，主动拉取 SES 事件） ---

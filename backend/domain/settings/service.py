@@ -29,9 +29,22 @@ SETTING_KEYS = [
     "unsub_page_success",    # 成功提示文案
     "unsub_page_logo",       # Logo 图片 URL
     "unsub_page_color",      # 品牌主色
+    # SSO 配置
+    "sso_github_enabled",
+    "sso_github_client_id",
+    "sso_github_client_secret",
+    "sso_google_enabled",
+    "sso_google_client_id",
+    "sso_google_client_secret",
+    "sso_saml_enabled",
+    "sso_saml_idp_entity_id",
+    "sso_saml_idp_sso_url",
+    "sso_saml_idp_cert",
+    "sso_saml_sp_entity_id",
 ]
 
-_SECRET_KEYS = {"bedrock_secret_key", "bedrock_api_key", "openai_api_key", "image_s3_secret_key"}
+_SECRET_KEYS = {"bedrock_secret_key", "bedrock_api_key", "openai_api_key", "image_s3_secret_key",
+                "sso_github_client_secret", "sso_google_client_secret"}
 
 
 def get_all_settings(db: Session) -> dict:
@@ -56,6 +69,8 @@ def get_all_settings(db: Session) -> dict:
     result["bedrock_has_ak_sk"] = has_ak_sk
     result["bedrock_has_api_key"] = has_api_key
     result["openai_has_key"] = has_openai_key
+    result["sso_has_github_secret"] = bool(result.get("sso_github_client_secret"))
+    result["sso_has_google_secret"] = bool(result.get("sso_google_client_secret"))
     result["image_has_s3_secret"] = has_s3_sk
     if not result.get("image_storage_mode"):
         result["image_storage_mode"] = "local"

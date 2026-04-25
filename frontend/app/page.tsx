@@ -10,6 +10,7 @@ export default function Home() {
   useEffect(()=>{const t=localStorage.getItem("ses_token"),u=localStorage.getItem("ses_user");if(t&&u){setToken(t);setUser(JSON.parse(u));}},[]);
   const login=async(un:string,pw:string)=>{const r=await fetch(`${API}/auth/login`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username:un,password:pw})});if(!r.ok){const e=await r.json();throw new Error(e.detail||"登录失败");}const d=await r.json();setToken(d.access_token);setUser(d.user);localStorage.setItem("ses_token",d.access_token);localStorage.setItem("ses_user",JSON.stringify(d.user));};
   const logout=()=>{setToken("");setUser(null);localStorage.removeItem("ses_token");localStorage.removeItem("ses_user");};
-  if(!user) return <ToastProvider><LoginPage onLogin={login}/></ToastProvider>;
+  const ssoLogin=(ssoToken:string,ssoUser:any)=>{setToken(ssoToken);setUser(ssoUser);localStorage.setItem("ses_token",ssoToken);localStorage.setItem("ses_user",JSON.stringify(ssoUser));};
+  if(!user) return <ToastProvider><LoginPage onLogin={login} onSsoLogin={ssoLogin}/></ToastProvider>;
   return <ToastProvider><ConfirmProvider><AuthProvider value={{user,token,logout}}>{user.is_admin?<AdminApp/>:<UserApp/>}</AuthProvider></ConfirmProvider></ToastProvider>;
 }
