@@ -35,6 +35,8 @@ export default function LoginPage({onLogin,onSsoLogin}:{onLogin:(un:string,pw:st
   const [err,setErr]=useState("");const [ld,setLd]=useState(false);
   const [ssoProviders,setSsoProviders]=useState<{id:string;name:string;icon:string}[]>([]);
   const captcha=useSimpleCaptcha();
+  let t:(k:string)=>string = (k)=>k, locale="zh", setLocale:(l:any)=>void = ()=>{};
+  try { const i18n = require("../i18n"); t=i18n.useT(); const lc=i18n.useLocale(); locale=lc.locale; setLocale=lc.setLocale; } catch {}
 
   useEffect(()=>{
     fetch("/api/sso/providers").then(r=>r.json()).then(d=>{if(Array.isArray(d))setSsoProviders(d);}).catch(()=>{});
@@ -57,29 +59,30 @@ export default function LoginPage({onLogin,onSsoLogin}:{onLogin:(un:string,pw:st
 
   const go=async(e:React.FormEvent)=>{
     e.preventDefault(); setErr("");
-    if(!captcha.verify(captchaInput)){setErr("验证码错误");captcha.generate();setCaptchaInput("");return;}
+    if(!captcha.verify(captchaInput)){setErr(t("login.captchaError"));captcha.generate();setCaptchaInput("");return;}
     setLd(true);try{await onLogin(u,p);}catch(e:any){setErr(e.message);captcha.generate();setCaptchaInput("");}finally{setLd(false);}
   };
 
   return <div className="min-h-screen flex items-center justify-center" style={{background:"linear-gradient(135deg,#3C50E0 0%,#6366F1 50%,#8B5CF6 100%)"}}>
-    <div className="bg-white rounded-2xl shadow-2xl p-8 w-full" style={{maxWidth:400}}>
-      <div className="text-center mb-8"><div className="w-12 h-12 rounded-xl bg-indigo-600 flex items-center justify-center mx-auto mb-3"><span className="text-white text-xl font-bold">S</span></div><h1 className="text-2xl font-bold text-gray-800">SES Sender</h1><p className="text-gray-400 text-sm mt-1">邮件批量发送管理平台</p></div>
+    <div className="bg-white rounded-2xl shadow-2xl p-8 w-full relative" style={{maxWidth:400}}>
+      <button onClick={()=>setLocale(locale==="zh"?"en":"zh")} className="absolute top-4 right-4 text-xs text-gray-400 hover:text-gray-600 border border-gray-200 rounded px-2 py-1">{locale==="zh"?"EN":"中文"}</button>
+      <div className="text-center mb-8"><div className="w-12 h-12 rounded-xl bg-indigo-600 flex items-center justify-center mx-auto mb-3"><span className="text-white text-xl font-bold">S</span></div><h1 className="text-2xl font-bold text-gray-800">{t("login.title")}</h1><p className="text-gray-400 text-sm mt-1">{t("login.subtitle")}</p></div>
       <form onSubmit={go} className="space-y-4">
         {err&&<div className="bg-red-50 border border-red-200 text-red-600 text-sm rounded-lg p-3">{err}</div>}
-        <div><label className="text-sm font-medium text-gray-700 mb-1.5 block">用户名</label><input className="w-full h-11 px-4 border border-gray-200 rounded-lg text-gray-800 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 transition" value={u} onChange={e=>setU(e.target.value)}/></div>
-        <div><label className="text-sm font-medium text-gray-700 mb-1.5 block">密码</label><input type="password" className="w-full h-11 px-4 border border-gray-200 rounded-lg text-gray-800 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 transition" value={p} onChange={e=>setP(e.target.value)}/></div>
+        <div><label className="text-sm font-medium text-gray-700 mb-1.5 block">{t("login.username")}</label><input className="w-full h-11 px-4 border border-gray-200 rounded-lg text-gray-800 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 transition" value={u} onChange={e=>setU(e.target.value)}/></div>
+        <div><label className="text-sm font-medium text-gray-700 mb-1.5 block">{t("login.password")}</label><input type="password" className="w-full h-11 px-4 border border-gray-200 rounded-lg text-gray-800 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 transition" value={p} onChange={e=>setP(e.target.value)}/></div>
         <div>
-          <label className="text-sm font-medium text-gray-700 mb-1.5 block">验证码</label>
+          <label className="text-sm font-medium text-gray-700 mb-1.5 block">{t("login.captcha")}</label>
           <div className="flex gap-3">
-            <input className="flex-1 h-11 px-4 border border-gray-200 rounded-lg text-gray-800 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 transition tracking-widest" placeholder="请输入验证码" value={captchaInput} onChange={e=>setCaptchaInput(e.target.value)} autoComplete="off"/>
-            <canvas ref={captcha.ref} width={120} height={40} onClick={captcha.generate} className="rounded-lg cursor-pointer border border-gray-200 flex-shrink-0 hover:opacity-80 transition" title="点击刷新验证码"/>
+            <input className="flex-1 h-11 px-4 border border-gray-200 rounded-lg text-gray-800 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 transition tracking-widest" placeholder={t("login.captchaPlaceholder")} value={captchaInput} onChange={e=>setCaptchaInput(e.target.value)} autoComplete="off"/>
+            <canvas ref={captcha.ref} width={120} height={40} onClick={captcha.generate} className="rounded-lg cursor-pointer border border-gray-200 flex-shrink-0 hover:opacity-80 transition" title={t("login.captchaRefresh")}/>
           </div>
-          <p className="text-xs text-gray-400 mt-1">点击图片可刷新验证码</p>
+          <p className="text-xs text-gray-400 mt-1">{t("login.captchaRefresh")}</p>
         </div>
-        <button type="submit" disabled={ld} className="w-full h-11 rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700 disabled:opacity-50 transition">{ld?"登录中...":"登 录"}</button>
+        <button type="submit" disabled={ld} className="w-full h-11 rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700 disabled:opacity-50 transition">{ld?t("login.loggingIn"):t("login.loginBtn")}</button>
       </form>
       {ssoProviders.length>0&&<>
-        <div className="flex items-center gap-3 my-5"><div className="flex-1 h-px bg-gray-200"/><span className="text-xs text-gray-400">或使用以下方式登录</span><div className="flex-1 h-px bg-gray-200"/></div>
+        <div className="flex items-center gap-3 my-5"><div className="flex-1 h-px bg-gray-200"/><span className="text-xs text-gray-400">{t("login.ssoOr")}</span><div className="flex-1 h-px bg-gray-200"/></div>
         <div className="flex gap-3">{ssoProviders.map(sp=>(
           <button key={sp.id} onClick={()=>ssoLogin(sp.id)} className="flex-1 h-11 flex items-center justify-center gap-2 border border-gray-200 rounded-lg hover:bg-gray-50 transition text-sm text-gray-700 font-medium">
             {ssoIcons[sp.icon]?<svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><path d={ssoIcons[sp.icon]}/></svg>:<span>🔐</span>}

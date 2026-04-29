@@ -300,6 +300,21 @@ _scheduler_thread = threading.Thread(target=_scheduler_worker, daemon=True)
 _scheduler_thread.start()
 
 
+# --- Sender Engine（单 Writer 模式） ---
+from core.config import ENABLE_SENDER, SENDER_CONCURRENCY, SENDER_MESSAGE_RATE, SENDER_SLIDING_WINDOW_SECONDS, SENDER_SLIDING_WINDOW_RATE
+
+if ENABLE_SENDER:
+    from core.sender import start_engine
+    _sender_engine = start_engine(
+        concurrency=SENDER_CONCURRENCY,
+        message_rate=SENDER_MESSAGE_RATE,
+        sliding_window_seconds=SENDER_SLIDING_WINDOW_SECONDS,
+        sliding_window_rate=SENDER_SLIDING_WINDOW_RATE,
+    )
+else:
+    logging.getLogger("ses-sender.engine").info("[Sender Engine] ENABLE_SENDER=false，当前实例不处理发送任务")
+
+
 @app.get("/")
 def root():
     return {"message": "SES Sender API is running"}

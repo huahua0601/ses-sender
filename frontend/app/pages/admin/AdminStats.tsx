@@ -1,9 +1,10 @@
 "use client";
 import React, { useState, useEffect } from "react";
 import { API, authH, useAuth, useToast, Card, Badge, Btn, Pager } from "../../components/shared";
+import { useT } from "../../i18n";
 
 export default function AdminStats() {
-  const {token}=useAuth();
+  const {token}=useAuth(); const t=useT();
   const [stats,setStats]=useState<any>(null);
   const [jobs,setJobs]=useState<any[]>([]); const [page,setPage]=useState(1); const [total,setTotal]=useState(0); const [totalPages,setTotalPages]=useState(1);
 
@@ -21,15 +22,15 @@ export default function AdminStats() {
 
   return <div className="space-y-6">
     {stats?.summary&&<div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-      {statCard("发送用户数",stats.summary.total_users,"位用户使用了邮件发送","#3C50E0")}
-      {statCard("总发送批次",stats.summary.total_jobs,"批次邮件发送任务","#8B5CF6")}
-      {statCard("总发送人数",stats.summary.total_contacts,"封邮件已发送","#10B981")}
-      {statCard("发送成功率",stats.summary.success_rate+"%","批次级别成功率","#F59E0B")}
+      {statCard(t("admin.stats.totalUsers"),stats.summary.total_users,t("admin.stats.usersSub"),"#3C50E0")}
+      {statCard(t("admin.stats.totalJobs"),stats.summary.total_jobs,t("admin.stats.jobsSub"),"#8B5CF6")}
+      {statCard(t("admin.stats.totalContacts"),stats.summary.total_contacts,t("admin.stats.contactsSub"),"#10B981")}
+      {statCard(t("admin.stats.successRate"),stats.summary.success_rate+"%",t("admin.stats.rateSub"),"#F59E0B")}
     </div>}
 
-    <Card title="用户发送统计" extra={<Btn variant="outline" size="sm" onClick={()=>{loadStats();loadJobs(1);}}>刷新</Btn>}>
+    <Card title={t("admin.stats.userStatsTitle")} extra={<Btn variant="outline" size="sm" onClick={()=>{loadStats();loadJobs(1);}}>{t("common.refresh")}</Btn>}>
       <div className="overflow-x-auto"><table className="w-full">
-        <thead><tr className="border-b border-gray-100">{["用户名","显示名称","发送邮箱","发送批次","发送人数","成功","失败","首次发送","最近发送"].map(h=><th key={h} className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider py-3 px-3 whitespace-nowrap">{h}</th>)}</tr></thead>
+        <thead><tr className="border-b border-gray-100">{[t("admin.stats.colUsername"),t("admin.stats.colDisplayName"),t("admin.stats.colSendEmail"),t("admin.stats.colBatches"),t("admin.stats.colContacts"),t("admin.stats.colSuccess"),t("admin.stats.colFailed"),t("admin.stats.colFirstSend"),t("admin.stats.colLastSend")].map(h=><th key={h} className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider py-3 px-3 whitespace-nowrap">{h}</th>)}</tr></thead>
         <tbody>{(stats?.users||[]).map((u:any)=><tr key={u.user_id} className="border-b border-gray-50 hover:bg-gray-50/50 transition">
           <td className="py-3 px-3 text-sm font-medium text-gray-800">{u.username}</td>
           <td className="py-3 px-3 text-sm text-gray-600">{u.display_name}</td>
@@ -42,12 +43,12 @@ export default function AdminStats() {
           <td className="py-3 px-3 text-xs text-gray-400 whitespace-nowrap">{u.last_send?new Date(u.last_send).toLocaleString():"-"}</td>
         </tr>)}</tbody>
       </table></div>
-      {(!stats?.users||stats.users.length===0)&&<p className="text-center py-8 text-sm text-gray-400">暂无发送数据</p>}
+      {(!stats?.users||stats.users.length===0)&&<p className="text-center py-8 text-sm text-gray-400">{t("admin.stats.noSendData")}</p>}
     </Card>
 
-    <Card title="全部发送记录">
+    <Card title={t("admin.stats.allRecordsTitle")}>
       <div className="overflow-x-auto"><table className="w-full">
-        <thead><tr className="border-b border-gray-100">{["批次ID","用户","模版","客群","发送邮箱","人数","状态","发送时间"].map(h=><th key={h} className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider py-3 px-3 whitespace-nowrap">{h}</th>)}</tr></thead>
+        <thead><tr className="border-b border-gray-100">{[t("admin.stats.colBatchId"),t("admin.stats.colUser"),t("admin.stats.colTemplate"),t("admin.stats.colGroup"),t("admin.stats.colEmail"),t("admin.stats.colCount"),t("admin.stats.colStatus"),t("admin.stats.colSendTime")].map(h=><th key={h} className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider py-3 px-3 whitespace-nowrap">{h}</th>)}</tr></thead>
         <tbody>{jobs.map((j:any)=><tr key={j.id} className="border-b border-gray-50 hover:bg-gray-50/50 transition">
           <td className="py-3 px-3 text-xs text-gray-500 font-mono">{j.batch_id}</td>
           <td className="py-3 px-3 text-sm text-gray-800">{j.display_name||j.username}</td>
@@ -55,11 +56,11 @@ export default function AdminStats() {
           <td className="py-3 px-3 text-sm text-gray-600">{j.group_name}</td>
           <td className="py-3 px-3 text-sm text-gray-500">{j.source_email}</td>
           <td className="py-3 px-3 text-sm text-gray-800 text-center">{j.total_contacts}</td>
-          <td className="py-3 px-3">{j.status==="success"?<Badge color="green">成功</Badge>:j.status==="partial"?<Badge color="orange">部分</Badge>:j.status==="queued"?<Badge color="gray">排队中</Badge>:j.status==="sending"?<Badge color="blue">发送中</Badge>:<Badge color="red">失败</Badge>}</td>
+          <td className="py-3 px-3">{j.status==="success"?<Badge color="green">{t("admin.stats.statusSuccess")}</Badge>:j.status==="partial"?<Badge color="orange">{t("admin.stats.statusPartial")}</Badge>:j.status==="queued"?<Badge color="gray">{t("admin.stats.statusQueued")}</Badge>:j.status==="sending"?<Badge color="blue">{t("admin.stats.statusSending")}</Badge>:<Badge color="red">{t("admin.stats.statusFailed")}</Badge>}</td>
           <td className="py-3 px-3 text-xs text-gray-400 whitespace-nowrap">{j.created_at?new Date(j.created_at).toLocaleString():"-"}</td>
         </tr>)}</tbody>
       </table></div>
-      {jobs.length===0&&<p className="text-center py-8 text-sm text-gray-400">暂无发送记录</p>}
+      {jobs.length===0&&<p className="text-center py-8 text-sm text-gray-400">{t("admin.stats.noSendRecords")}</p>}
       <Pager page={page} totalPages={totalPages} total={total} onPageChange={p=>loadJobs(p)}/>
     </Card>
   </div>;

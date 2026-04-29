@@ -1,0 +1,409 @@
+"""
+Sender Engine — 参考 Listmonk 的 Worker Pool + Rate Limiting 设计
+
+架构:
+  DB(queued jobs) → Scanner Thread → Message Queue → Worker Pool → SES
+
+限速:
+  - Concurrency: Worker 数量（并发发送协程数）
+  - MessageRate: 每个 Worker 每秒最大发送数
+  - 全局速率 = Concurrency × MessageRate
+  - 滑动窗口: 可选的全局总量限制（N 秒内最多 M 封）
+
+单 Writer:
+  - 通过 ENABLE_SENDER=true 控制，只有一个实例启动 Engine
+  - 其他实例只负责 API，发送任务写入 DB 由 sender 实例处理
+"""
+
+import threading
+import queue
+import time
+import logging
+import json
+from dataclasses import dataclass, field
+from typing import Optional
+
+logger = logging.getLogger("ses-sender.engine")
+
+
+@dataclass
+class SendTask:
+    """单封邮件发送任务"""
+    job_id: int
+    batch_id: str
+    recipient: str
+    name: str
+    source_email: str
+    subject_tpl: str
+    html_tpl: str
+    text_tpl: str
+    attributes: dict = field(default_factory=dict)
+    config_set: str = ""
+    tags: dict = field(default_factory=dict)
+    unsub_url: str = ""
+
+
+class SlidingWindow:
+    """滑动窗口限流器"""
+
+    def __init__(self, window_seconds: int, max_count: int):
+        self.window = window_seconds
+        self.max_count = max_count
+        self._count = 0
+        self._start = time.monotonic()
+        self._lock = threading.Lock()
+
+    def acquire(self) -> bool:
+        with self._lock:
+            now = time.monotonic()
+            if now - self._start >= self.window:
+                self._count = 0
+                self._start = now
+            if self._count < self.max_count:
+                self._count += 1
+                return True
+            return False
+
+    def wait_and_acquire(self, timeout: float = 60.0):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self.acquire():
+                return True
+            time.sleep(0.05)
+        return False
+
+
+class SenderEngine:
+    """
+    邮件发送引擎
+
+    参考 Listmonk 的设计:
+    - 固定数量的 Worker 线程从共享队列消费
+    - 每个 Worker 有独立的 MessageRate 限速
+    - 所有任务（不论哪个用户发起）共享同一个 Worker Pool
+    - 全局速率 = concurrency × message_rate
+    """
+
+    def __init__(self, concurrency: int = 2, message_rate: int = 10,
+                 sliding_window_seconds: int = 0, sliding_window_rate: int = 0):
+        self.concurrency = max(concurrency, 1)
+        self.message_rate = max(message_rate, 1)
+        self.queue: queue.Queue[Optional[SendTask]] = queue.Queue(maxsize=concurrency * message_rate * 4)
+        self.running = False
+        self._workers: list[threading.Thread] = []
+        self._scanner: Optional[threading.Thread] = None
+
+        self.sliding_window: Optional[SlidingWindow] = None
+        if sliding_window_seconds > 0 and sliding_window_rate > 0:
+            self.sliding_window = SlidingWindow(sliding_window_seconds, sliding_window_rate)
+
+        self._stats_lock = threading.Lock()
+        self._total_sent = 0
+        self._total_errors = 0
+
+    @property
+    def effective_rate(self) -> int:
+        return self.concurrency * self.message_rate
+
+    def start(self):
+        if self.running:
+            return
+        self.running = True
+        logger.info(f"[Sender Engine] 启动: concurrency={self.concurrency}, "
+                     f"message_rate={self.message_rate}/worker/s, "
+                     f"全局速率≈{self.effective_rate}/s"
+                     f"{f', 滑动窗口={self.sliding_window.window}s/{self.sliding_window.max_count}' if self.sliding_window else ''}")
+
+        for i in range(self.concurrency):
+            t = threading.Thread(target=self._worker, args=(i,), daemon=True, name=f"sender-worker-{i}")
+            t.start()
+            self._workers.append(t)
+
+        self._scanner = threading.Thread(target=self._scan_loop, daemon=True, name="sender-scanner")
+        self._scanner.start()
+
+    def stop(self):
+        self.running = False
+        for _ in self._workers:
+            self.queue.put(None)
+        for t in self._workers:
+            t.join(timeout=5)
+        self._workers.clear()
+        logger.info(f"[Sender Engine] 已停止. 总发送={self._total_sent}, 总错误={self._total_errors}")
+
+    def enqueue(self, task: SendTask):
+        self.queue.put(task, timeout=30)
+
+    def _worker(self, worker_id: int):
+        """Worker 线程：从队列取任务，限速发送"""
+        logger.info(f"[Worker-{worker_id}] 启动")
+        num_msg = 0
+        last_reset = time.monotonic()
+
+        while self.running:
+            try:
+                task = self.queue.get(timeout=2)
+            except queue.Empty:
+                continue
+
+            if task is None:
+                break
+
+            if self.sliding_window and not self.sliding_window.wait_and_acquire(timeout=30):
+                logger.warning(f"[Worker-{worker_id}] 滑动窗口限流超时，跳过")
+                self._update_detail_status(task, "Failed", "Rate limit timeout")
+                continue
+
+            now = time.monotonic()
+            if now - last_reset >= 1.0:
+                num_msg = 0
+                last_reset = now
+            elif num_msg >= self.message_rate:
+                sleep_time = 1.0 - (now - last_reset)
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
+                num_msg = 0
+                last_reset = time.monotonic()
+
+            num_msg += 1
+            self._send_one(task, worker_id)
+
+        logger.info(f"[Worker-{worker_id}] 已退出")
+
+    def _send_one(self, task: SendTask, worker_id: int):
+        """发送单封邮件"""
+        import boto3
+        from core.ses import sesv2_client
+        from core.config import SES_CONFIGURATION_SET, UNSUBSCRIBE_BASE_URL
+
+        try:
+            subject = self._replace_vars(task.subject_tpl, task)
+            html_body = self._replace_vars(task.html_tpl, task)
+
+            email_params = {
+                "FromEmailAddress": task.source_email,
+                "Destination": {"ToAddresses": [task.recipient]},
+                "Content": {
+                    "Simple": {
+                        "Subject": {"Data": subject, "Charset": "UTF-8"},
+                        "Body": {"Html": {"Data": html_body, "Charset": "UTF-8"}},
+                    }
+                },
+            }
+
+            if task.config_set:
+                email_params["ConfigurationSetName"] = task.config_set
+            if task.tags:
+                email_params["EmailTags"] = [{"Name": k, "Value": v} for k, v in task.tags.items()]
+
+            headers = []
+            if task.unsub_url:
+                headers.append({"Name": "List-Unsubscribe", "Value": f"<{task.unsub_url}>"})
+                headers.append({"Name": "List-Unsubscribe-Post", "Value": "List-Unsubscribe=One-Click"})
+            if headers:
+                email_params["Content"]["Simple"]["Headers"] = headers
+
+            response = sesv2_client.send_email(**email_params)
+            message_id = response.get("MessageId", "")
+
+            self._update_detail_status(task, "Success", "", message_id)
+
+            with self._stats_lock:
+                self._total_sent += 1
+
+        except Exception as e:
+            err_str = str(e)
+            logger.warning(f"[Worker-{worker_id}] 发送失败 {task.recipient}: {err_str[:100]}")
+            self._update_detail_status(task, "Failed", err_str[:500])
+
+            with self._stats_lock:
+                self._total_errors += 1
+
+            if "Throttling" in err_str or "Rate exceeded" in err_str:
+                time.sleep(2)
+
+    def _replace_vars(self, template: str, task: SendTask) -> str:
+        if not template:
+            return ""
+        result = template.replace("{{name}}", task.name).replace("{{email}}", task.recipient)
+        if task.unsub_url:
+            result = result.replace("{{unsubscribe_url}}", task.unsub_url)
+        else:
+            result = result.replace("{{unsubscribe_url}}", "#")
+        for k, v in task.attributes.items():
+            result = result.replace("{{" + k + "}}", str(v))
+        return result
+
+    def _update_detail_status(self, task: SendTask, status: str, error: str = "", message_id: str = ""):
+        """更新 sending_job_details 表"""
+        try:
+            from core.database import SessionLocal
+            from domain.sending.models import SendingJobDetail, SendingJob
+            db = SessionLocal()
+            try:
+                detail = db.query(SendingJobDetail).filter(
+                    SendingJobDetail.batch_id == task.batch_id,
+                    SendingJobDetail.recipient == task.recipient,
+                ).first()
+                if detail:
+                    detail.send_status = status
+                    if error:
+                        detail.send_error = error
+                    if message_id:
+                        detail.message_id = message_id
+
+                job = db.query(SendingJob).filter(SendingJob.batch_id == task.batch_id).first()
+                if job:
+                    job.sent_count = (job.sent_count or 0) + 1
+
+                db.commit()
+            finally:
+                db.close()
+        except Exception as e:
+            logger.error(f"[Engine] 更新状态失败: {e}")
+
+    def _scan_loop(self):
+        """扫描数据库中 queued 状态的任务并加载到队列"""
+        logger.info("[Scanner] 启动，每 5 秒扫描一次")
+        while self.running:
+            try:
+                self._process_queued_jobs()
+            except Exception as e:
+                logger.error(f"[Scanner] 异常: {e}")
+            time.sleep(5)
+
+    def _process_queued_jobs(self):
+        from core.database import SessionLocal
+        from domain.sending.models import SendingJob, SendingJobDetail
+        from domain.audience.models import Contact
+        from domain.template.models import EmailTemplate
+        from domain.sending.models import UnsubscribeRecord
+        from core.config import SES_CONFIGURATION_SET, UNSUBSCRIBE_BASE_URL
+        from core.unsubscribe import generate_unsubscribe_token
+        from datetime import datetime
+
+        db = SessionLocal()
+        try:
+            # 修复卡住的 sending 任务（所有 detail 已处理完但状态未更新）
+            stuck = db.query(SendingJob).filter(SendingJob.status == "sending").all()
+            for job in stuck:
+                pending = db.query(SendingJobDetail).filter(
+                    SendingJobDetail.batch_id == job.batch_id,
+                    SendingJobDetail.send_status == "Pending",
+                ).count()
+                if pending == 0:
+                    failed = db.query(SendingJobDetail).filter(
+                        SendingJobDetail.batch_id == job.batch_id,
+                        SendingJobDetail.send_status == "Failed",
+                    ).count()
+                    total = db.query(SendingJobDetail).filter(SendingJobDetail.batch_id == job.batch_id).count()
+                    job.sent_count = total
+                    job.finished_at = datetime.utcnow()
+                    if failed == total:
+                        job.status = "failed"
+                    elif failed > 0:
+                        job.status = "partial"
+                        job.error_message = f"{failed} 封发送失败"
+                    else:
+                        job.status = "success"
+                    db.commit()
+                    logger.info(f"[Scanner] 修复卡住的任务 {job.batch_id} → {job.status}")
+
+            jobs = db.query(SendingJob).filter(SendingJob.status == "queued").limit(5).all()
+            for job in jobs:
+                job.status = "sending"
+                db.commit()
+
+                details = db.query(SendingJobDetail).filter(
+                    SendingJobDetail.batch_id == job.batch_id,
+                    SendingJobDetail.send_status == "Pending",
+                ).all()
+
+                if not details:
+                    job.status = "success"
+                    job.finished_at = datetime.utcnow()
+                    db.commit()
+                    continue
+
+                tpl = db.query(EmailTemplate).filter(EmailTemplate.user_id == job.user_id).first()
+                subject_tpl = tpl.subject if tpl else job.template_name
+                html_tpl = tpl.html_body if tpl else ""
+
+                def _ascii_tag(val):
+                    return "".join(c if ord(c) < 128 and c not in ' "\'\\' else "_" for c in str(val))[:256] or "unknown"
+
+                for detail in details:
+                    if detail.send_status == "Unsubscribed":
+                        continue
+
+                    unsub_url = ""
+                    if UNSUBSCRIBE_BASE_URL:
+                        token = generate_unsubscribe_token(detail.recipient, job.source_email)
+                        unsub_url = f"{UNSUBSCRIBE_BASE_URL}/unsubscribe?token={token}"
+
+                    attrs = {}
+                    contact = db.query(Contact).filter(Contact.email == detail.recipient).first()
+                    if contact and contact.attributes:
+                        try:
+                            attrs = json.loads(contact.attributes)
+                        except Exception:
+                            pass
+
+                    task = SendTask(
+                        job_id=job.id,
+                        batch_id=job.batch_id,
+                        recipient=detail.recipient,
+                        name=contact.name if contact else "Customer",
+                        source_email=job.source_email,
+                        subject_tpl=subject_tpl,
+                        html_tpl=html_tpl,
+                        text_tpl="",
+                        attributes=attrs,
+                        config_set=SES_CONFIGURATION_SET or "",
+                        tags={
+                            "batch_id": job.batch_id,
+                            "user_id": str(job.user_id),
+                            "template_name": _ascii_tag(job.template_name),
+                            "group_name": _ascii_tag(job.group_name),
+                        },
+                        unsub_url=unsub_url,
+                    )
+                    try:
+                        self.enqueue(task)
+                    except Exception:
+                        logger.warning(f"[Scanner] 队列满，稍后重试 batch={job.batch_id}")
+                        job.status = "queued"
+                        db.commit()
+                        return
+
+                logger.info(f"[Scanner] batch={job.batch_id} 已入队 {len(details)} 封")
+        finally:
+            db.close()
+
+
+# 全局单例
+_engine: Optional[SenderEngine] = None
+
+
+def get_engine() -> Optional[SenderEngine]:
+    return _engine
+
+
+def start_engine(concurrency: int = 2, message_rate: int = 10,
+                 sliding_window_seconds: int = 0, sliding_window_rate: int = 0):
+    global _engine
+    if _engine and _engine.running:
+        return _engine
+
+    from core.ses import SES_MAX_SEND_RATE
+    if message_rate <= 0:
+        message_rate = max(int(SES_MAX_SEND_RATE / max(concurrency, 1)), 1)
+
+    _engine = SenderEngine(
+        concurrency=concurrency,
+        message_rate=message_rate,
+        sliding_window_seconds=sliding_window_seconds,
+        sliding_window_rate=sliding_window_rate,
+    )
+    _engine.start()
+    return _engine

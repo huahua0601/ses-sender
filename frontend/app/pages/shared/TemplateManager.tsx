@@ -1,9 +1,11 @@
 "use client";
 import React, { useState, useEffect, useRef } from "react";
 import { API, authH, useAuth, useToast, useConfirm, Card, Btn, Input, Textarea, Modal } from "../../components/shared";
+import { useT } from "../../i18n";
 
 export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
   const {token}=useAuth(); const {toast}=useToast(); const {confirm:cfm}=useConfirm();
+  const t = useT();
   const [list,setList]=useState<any[]>([]);
   const [mode,setMode]=useState<"list"|"create"|"edit">("list");
   const [f,setF]=useState({name:"",subject:"",html_body:""});
@@ -97,7 +99,7 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
     const useOriginal = !feedback;
     const subj = useOriginal ? f.subject : (aiResult?.optimized_subject || f.subject);
     const body = useOriginal ? f.html_body : (aiResult?.optimized_html || f.html_body);
-    if(!body.trim())return toast("warning","请先编写邮件内容");
+    if(!body.trim())return toast("warning",t("ai.writeContentFirst"));
     setAiLoading(true);setShowAiPrompt(false);
     if(useOriginal) setAiResult(null);
     try{
@@ -110,12 +112,12 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
       const r=await fetch(`${API}/ai/optimize-template`,{method:"POST",headers:authH(token),body:JSON.stringify(payload)});
       const d=await r.json();
       if(r.ok){setAiResult(d);setShowAi(true);setAiFeedback("");setAiPrompt("");setAiImages([]);}
-      else toast("error","AI 优化失败",d.detail||"请检查 Bedrock 配置");
-    }catch(e:any){toast("error","AI 优化失败",e?.message||"网络错误，请重试");}
+      else toast("error",t("ai.optimizeFailed"),d.detail||"");
+    }catch(e:any){toast("error",t("ai.optimizeFailed"),e?.message||t("common.networkError"));}
     finally{setAiLoading(false);}
   };
   const applyAi=()=>{
-    if(aiResult){setF(prev=>({...prev,subject:aiResult.optimized_subject,html_body:aiResult.optimized_html}));setAiResult(null);setShowAi(false);toast("success","已采纳 AI 优化");}
+    if(aiResult){setF(prev=>({...prev,subject:aiResult.optimized_subject,html_body:aiResult.optimized_html}));setAiResult(null);setShowAi(false);toast("success",t("ai.applied"));}
   };
 
   const [showAi,setShowAi]=useState(false);
@@ -133,7 +135,7 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
   };
 
   const runEval=async()=>{
-    if(!f.html_body.trim()) return toast("warning","请先编写邮件内容");
+    if(!f.html_body.trim()) return toast("warning",t("ai.writeContentFirst"));
     setEvalLoading(true);setEvalResult(null);setFixResults({});setEvalTab(0);
     try{
       const payload:any={subject:f.subject,html_body:f.html_body};
@@ -141,8 +143,8 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
       const r=await fetch(`${API}/ai/evaluate-template`,{method:"POST",headers:authH(token),body:JSON.stringify(payload)});
       const d=await r.json();
       if(r.ok){setEvalResult(d);setShowEval(true);}
-      else toast("error","评测失败",d.detail||"请检查 AI 配置");
-    }catch(e:any){toast("error","评测失败",e?.message||"网络错误");}
+      else toast("error",t("ai.evalFailed"),d.detail||"");
+    }catch(e:any){toast("error",t("ai.evalFailed"),e?.message||t("common.networkError"));}
     finally{setEvalLoading(false);}
   };
 
@@ -154,8 +156,8 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
       if(curModel?.model_id) payload.model_id=curModel.model_id;
       const r=await fetch(`${API}/ai/dimension-fix`,{method:"POST",headers:authH(token),body:JSON.stringify(payload)});
       if(r.ok){const d=await r.json();setFixResults(prev=>({...prev,[`${evalResult?.models?.[evalTab]?.model_id}_${dim.name}`]:d}));}
-      else{const e=await r.json();toast("error","获取建议失败",e.detail);}
-    }catch{toast("error","网络错误");}
+      else{const e=await r.json();toast("error",t("ai.dimFixFailed"),e.detail);}
+    }catch{toast("error",t("common.networkError"));}
     finally{setFixLoading("");}
   };
 
@@ -163,10 +165,10 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
 
   const create=async()=>{
     syncFromSplitEditor();
-    if(!f.name||!f.subject||!f.html_body)return toast("warning","请填写完整");
+    if(!f.name||!f.subject||!f.html_body)return toast("warning",t("template.fillComplete"));
     const r=await fetch(`${API}${apiPrefix}`,{method:"POST",headers:authH(token),body:JSON.stringify(f)});
-    if(r.ok){toast("success","模版创建成功");setMode("list");load();}
-    else{const e=await r.json();toast("error","失败",e.detail);}
+    if(r.ok){toast("success",t("template.created"));setMode("list");load();}
+    else{const e=await r.json();toast("error",t("common.failed"),e.detail);}
   };
 
   const openEdit=(t:any)=>{setEditId(t.id);setF({name:t.name,subject:t.subject,html_body:t.html_body});setMode("edit");setAiResult(null);splitInitRef.current=false;};
@@ -175,31 +177,31 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
 
   const update=async()=>{
     syncFromSplitEditor();
-    if(!f.subject||!f.html_body)return toast("warning","请填写完整");
+    if(!f.subject||!f.html_body)return toast("warning",t("template.fillComplete"));
     const r=await fetch(`${API}${apiPrefix}/${editId}`,{method:"PUT",headers:authH(token),body:JSON.stringify({subject:f.subject,html_body:f.html_body})});
-    if(r.ok){toast("success","模版已更新");setMode("list");load();}
-    else{const e=await r.json();toast("error","更新失败",e.detail);}
+    if(r.ok){toast("success",t("template.updated"));setMode("list");load();}
+    else{const e=await r.json();toast("error",t("template.updateFailed"),e.detail);}
   };
 
-  const del=async(t:any)=>{if(!await cfm("删除模版",`确定删除「${t.name}」？不可恢复。`,"确认删除"))return;const r=await fetch(`${API}${apiPrefix}/${t.id}`,{method:"DELETE",headers:authH(token)});if(r.ok){toast("success","已删除");load();}else{const e=await r.json();toast("error","失败",e.detail);}};
+  const del=async(t2:any)=>{if(!await cfm(t("template.deleteTitle"),t("template.deleteConfirm",{name:t2.name}),t("template.confirmDeleteBtn")))return;const r=await fetch(`${API}${apiPrefix}/${t2.id}`,{method:"DELETE",headers:authH(token)});if(r.ok){toast("success",t("template.deleted"));load();}else{const e=await r.json();toast("error",t("common.failed"),e.detail);}};
 
   const snippets = [
-    {label:"标题",icon:"H",html:'<h1 style="color:#333;font-size:24px;">标题文字</h1>\n'},
-    {label:"段落",icon:"P",html:'<p style="color:#555;font-size:14px;line-height:1.8;">段落内容</p>\n'},
-    {label:"按钮",icon:"▣",html:'<a href="https://example.com" style="display:inline-block;padding:12px 28px;background:#6366f1;color:#fff;text-decoration:none;border-radius:6px;font-size:14px;">点击按钮</a>\n'},
-    {label:"图片",icon:"🖼",html:'<img src="https://via.placeholder.com/600x200" alt="图片" style="max-width:100%;height:auto;border-radius:8px;" />\n'},
-    {label:"分割线",icon:"—",html:'<hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;" />\n'},
-    {label:"表格",icon:"⊞",html:'<table style="width:100%;border-collapse:collapse;">\n  <tr style="background:#f3f4f6;">\n    <th style="padding:10px 16px;text-align:left;border-bottom:2px solid #e5e7eb;">列1</th>\n    <th style="padding:10px 16px;text-align:left;border-bottom:2px solid #e5e7eb;">列2</th>\n  </tr>\n  <tr>\n    <td style="padding:10px 16px;border-bottom:1px solid #f3f4f6;">内容</td>\n    <td style="padding:10px 16px;border-bottom:1px solid #f3f4f6;">内容</td>\n  </tr>\n</table>\n'},
-    {label:"卡片",icon:"☐",html:'<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:24px;margin:16px 0;">\n  <h2 style="margin:0 0 8px;color:#333;font-size:18px;">卡片标题</h2>\n  <p style="margin:0;color:#666;font-size:14px;">卡片内容描述</p>\n</div>\n'},
-    {label:"页脚",icon:"⊥",html:'<div style="text-align:center;padding:20px 0;border-top:1px solid #e5e7eb;margin-top:30px;">\n  <p style="color:#999;font-size:12px;">© 2026 Your Company. All rights reserved.</p>\n  <p style="color:#999;font-size:12px;"><a href="{{unsubscribe_url}}" style="color:#999;">取消订阅</a></p>\n</div>\n'},
+    {label:t("template.toolbar.heading"),icon:"H",html:`<h1 style="color:#333;font-size:24px;">${t("template.snippet.headingText")}</h1>\n`},
+    {label:t("template.toolbar.paragraph"),icon:"P",html:`<p style="color:#555;font-size:14px;line-height:1.8;">${t("template.snippet.paragraphText")}</p>\n`},
+    {label:t("template.toolbar.button"),icon:"▣",html:`<a href="https://example.com" style="display:inline-block;padding:12px 28px;background:#6366f1;color:#fff;text-decoration:none;border-radius:6px;font-size:14px;">${t("template.snippet.buttonText")}</a>\n`},
+    {label:t("template.toolbar.image"),icon:"🖼",html:`<img src="https://via.placeholder.com/600x200" alt="${t("template.snippet.imageAlt")}" style="max-width:100%;height:auto;border-radius:8px;" />\n`},
+    {label:t("template.toolbar.divider"),icon:"—",html:'<hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;" />\n'},
+    {label:t("template.toolbar.table"),icon:"⊞",html:`<table style="width:100%;border-collapse:collapse;">\n  <tr style="background:#f3f4f6;">\n    <th style="padding:10px 16px;text-align:left;border-bottom:2px solid #e5e7eb;">${t("template.snippet.col1")}</th>\n    <th style="padding:10px 16px;text-align:left;border-bottom:2px solid #e5e7eb;">${t("template.snippet.col2")}</th>\n  </tr>\n  <tr>\n    <td style="padding:10px 16px;border-bottom:1px solid #f3f4f6;">${t("template.snippet.cellContent")}</td>\n    <td style="padding:10px 16px;border-bottom:1px solid #f3f4f6;">${t("template.snippet.cellContent")}</td>\n  </tr>\n</table>\n`},
+    {label:t("template.toolbar.card"),icon:"☐",html:`<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:24px;margin:16px 0;">\n  <h2 style="margin:0 0 8px;color:#333;font-size:18px;">${t("template.snippet.cardTitle")}</h2>\n  <p style="margin:0;color:#666;font-size:14px;">${t("template.snippet.cardContent")}</p>\n</div>\n`},
+    {label:t("template.toolbar.footer"),icon:"⊥",html:`<div style="text-align:center;padding:20px 0;border-top:1px solid #e5e7eb;margin-top:30px;">\n  <p style="color:#999;font-size:12px;">© 2026 Your Company. All rights reserved.</p>\n  <p style="color:#999;font-size:12px;"><a href="{{unsubscribe_url}}" style="color:#999;">${t("template.snippet.unsubText")}</a></p>\n</div>\n`},
   ];
 
   const variables = [
-    {label:"姓名",val:"{{name}}"},
-    {label:"邮箱",val:"{{email}}"},
-    {label:"公司",val:"{{company}}"},
-    {label:"日期",val:"{{date}}"},
-    {label:"退订链接",val:"{{unsubscribe_url}}"},
+    {label:t("template.var.name"),val:"{{name}}"},
+    {label:t("template.var.email"),val:"{{email}}"},
+    {label:t("template.var.company"),val:"{{company}}"},
+    {label:t("template.var.date"),val:"{{date}}"},
+    {label:t("template.var.unsubLink"),val:"{{unsubscribe_url}}"},
   ];
 
   const insertSnippet = (html:string) => { setF(prev=>({...prev,html_body:prev.html_body+html})); };
@@ -209,19 +211,19 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
   const fileInputRef=useRef<HTMLInputElement>(null);
 
   const uploadImage = async (file: File) => {
-    if (!file.type.startsWith("image/")) { toast("warning","只支持图片文件"); return; }
-    if (file.size > 5*1024*1024) { toast("warning","图片不能超过 5MB"); return; }
+    if (!file.type.startsWith("image/")) { toast("warning",t("template.imageOnly")); return; }
+    if (file.size > 5*1024*1024) { toast("warning",t("template.imageSizeLimit")); return; }
     setUploading(true);
     try {
       const fd = new FormData(); fd.append("file", file);
       const r = await fetch(`${API}/upload/image`, {method:"POST", headers:{"Authorization":`Bearer ${token}`}, body:fd});
-      if (!r.ok) { const e = await r.json(); toast("error","上传失败",e.detail); return; }
+      if (!r.ok) { const e = await r.json(); toast("error",t("template.uploadFailed"),e.detail); return; }
       const d = await r.json();
       const imgUrl = d.url.startsWith("http") ? d.url : `${API}${d.url}`;
       const imgHtml = `<img src="${imgUrl}" alt="${file.name}" style="max-width:100%;height:auto;border-radius:8px;" />\n`;
       setF(prev=>({...prev,html_body:prev.html_body+imgHtml}));
-      toast("success","图片已上传",file.name);
-    } catch { toast("error","上传失败","网络错误"); }
+      toast("success",t("template.imageUploaded"),file.name);
+    } catch { toast("error",t("template.uploadFailed"),t("common.networkError")); }
     finally { setUploading(false); }
   };
 
@@ -246,7 +248,7 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
     previewBody = previewBody.replace(/\{\{(\w+)\}\}/g, '<span style="background:#fef3c7;padding:1px 4px;border-radius:3px;color:#92400e;font-size:inherit;">$1</span>');
     return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f9fafb;}</style></head><body>
       <div style="max-width:640px;margin:0 auto;background:#fff;">
-        ${subjectLine ? `<div style="background:#f8fafc;padding:12px 20px;border-bottom:1px solid #e5e7eb;"><span style="color:#9ca3af;font-size:12px;">主题：</span><span style="color:#374151;font-size:13px;">${subjectLine}</span></div>` : ''}
+        ${subjectLine ? `<div style="background:#f8fafc;padding:12px 20px;border-bottom:1px solid #e5e7eb;"><span style="color:#9ca3af;font-size:12px;">${t("template.subjectLabel")}</span><span style="color:#374151;font-size:13px;">${subjectLine}</span></div>` : ''}
         <div style="padding:24px 20px;">${previewBody}</div>
       </div>
     </body></html>`;
@@ -256,17 +258,17 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
 
   // ========== 列表视图 ==========
   if (mode === "list") {
-    return <Card title="邮件模版" extra={<Btn size="sm" onClick={openCreate}>+ 新建模版</Btn>}>
+    return <Card title={t("template.title")} extra={<Btn size="sm" onClick={openCreate}>{t("template.create")}</Btn>}>
       <div className="overflow-x-auto"><table className="w-full">
-        <thead><tr className="border-b border-gray-100">{["模版名称","邮件主题","创建时间","操作"].map(h=><th key={h} className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider py-3 px-4">{h}</th>)}</tr></thead>
-        <tbody>{list.map((t:any)=><tr key={t.id} className="border-b border-gray-50 hover:bg-gray-50/50 transition">
-          <td className="py-3 px-4 text-sm font-medium text-gray-800">{t.name}</td>
-          <td className="py-3 px-4 text-sm text-gray-500">{t.subject}</td>
-          <td className="py-3 px-4 text-sm text-gray-400">{t.created_at?new Date(t.created_at).toLocaleString():"-"}</td>
-          <td className="py-3 px-4 flex gap-1"><Btn variant="primary" size="sm" onClick={()=>openEdit(t)}>编辑</Btn><Btn variant="danger" size="sm" onClick={()=>del(t)}>删除</Btn></td>
+        <thead><tr className="border-b border-gray-100">{[t("template.tableTemplateName"),t("template.tableSubject"),t("template.tableCreatedAt"),t("template.tableActions")].map(h=><th key={h} className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider py-3 px-4">{h}</th>)}</tr></thead>
+        <tbody>{list.map((tpl:any)=><tr key={tpl.id} className="border-b border-gray-50 hover:bg-gray-50/50 transition">
+          <td className="py-3 px-4 text-sm font-medium text-gray-800">{tpl.name}</td>
+          <td className="py-3 px-4 text-sm text-gray-500">{tpl.subject}</td>
+          <td className="py-3 px-4 text-sm text-gray-400">{tpl.created_at?new Date(tpl.created_at).toLocaleString():"-"}</td>
+          <td className="py-3 px-4 flex gap-1"><Btn variant="primary" size="sm" onClick={()=>openEdit(tpl)}>{t("common.edit")}</Btn><Btn variant="danger" size="sm" onClick={()=>del(tpl)}>{t("common.delete")}</Btn></td>
         </tr>)}</tbody>
       </table></div>
-      {list.length===0&&<p className="text-center py-8 text-sm text-gray-400">暂无模版</p>}
+      {list.length===0&&<p className="text-center py-8 text-sm text-gray-400">{t("template.noTemplates")}</p>}
     </Card>;
   }
 
@@ -278,33 +280,33 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
     <div className="flex items-center justify-between">
       <div className="flex items-center gap-3">
         <button onClick={goBack} className="text-gray-400 hover:text-gray-700 transition text-sm flex items-center gap-1">
-          <span className="text-lg leading-none">&larr;</span> 返回列表
+          <span className="text-lg leading-none">&larr;</span> {t("template.backToList")}
         </button>
         <span className="text-gray-200">|</span>
-        <h2 className="text-lg font-semibold text-gray-800">{isCreate?"新建邮件模版":`编辑模版 - ${f.name}`}</h2>
+        <h2 className="text-lg font-semibold text-gray-800">{isCreate?t("template.createNew"):t("template.edit",{name:f.name})}</h2>
       </div>
       <div className="flex gap-2">
         <div className="relative">
           <Btn variant="outline" onClick={()=>{if(aiLoading)return;setShowAiPrompt(!showAiPrompt);}} disabled={aiLoading} className="border-purple-300 text-purple-600 hover:bg-purple-50">
-            {aiLoading?"AI 分析中...":"✨ AI 优化"}
+            {aiLoading?t("ai.analyzing"):t("ai.optimize")}
           </Btn>
           {showAiPrompt&&!aiLoading&&<div className="absolute right-0 top-full mt-2 w-96 bg-white border border-purple-200 rounded-xl shadow-xl p-4 z-50"
             onDragOver={e=>{e.preventDefault();e.stopPropagation();}}
             onDrop={e=>{e.preventDefault();e.stopPropagation();const files=e.dataTransfer?.files;if(files)for(let i=0;i<files.length;i++){if(files[i].type.startsWith("image/"))uploadAiImage(files[i]);}}}
           >
             {aiModels.length>1&&<div className="mb-3">
-              <label className="text-xs font-medium text-gray-600 mb-1 block">选择模型</label>
+              <label className="text-xs font-medium text-gray-600 mb-1 block">{t("ai.selectModel")}</label>
               <select value={selectedModel} onChange={e=>setSelectedModel(e.target.value)} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-purple-400">
-                <option value="">默认模型</option>
+                <option value="">{t("ai.defaultModel")}</option>
                 {(()=>{const groups=new Map<string,typeof aiModels>();aiModels.forEach(m=>{const k=m.provider_name||m.provider_type;if(!groups.has(k))groups.set(k,[]);groups.get(k)!.push(m);});return [...groups.entries()].map(([g,ms])=><optgroup key={g} label={`${ms[0]?.provider_type==="bedrock"?"☁️":"🔗"} ${g}`}>{ms.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</optgroup>);})()}
               </select>
             </div>}
-            <p className="text-sm font-medium text-gray-700 mb-2">优化提示词 <span className="text-gray-400 font-normal">（可选）</span></p>
+            <p className="text-sm font-medium text-gray-700 mb-2">{t("ai.optimizePrompt")} <span className="text-gray-400 font-normal">（{t("common.optional")}）</span></p>
             <textarea
               value={aiPrompt}
               onChange={e=>setAiPrompt(e.target.value)}
               onPaste={e=>{const items=e.clipboardData?.items;if(items)for(let i=0;i<items.length;i++){if(items[i].type.startsWith("image/")){e.preventDefault();const file=items[i].getAsFile();if(file)uploadAiImage(file);return;}}}}
-              placeholder="留空则按邮件最佳实践自动优化。&#10;也可输入具体要求，如：&#10;• 语气更正式&#10;• 参考图片中的设计风格&#10;• 适配移动端"
+              placeholder={t("ai.optimizePromptPlaceholder")}
               className="w-full border border-gray-200 rounded-lg p-3 text-sm resize-none outline-none focus:border-purple-400 focus:ring-1 focus:ring-purple-300"
               rows={3}
               autoFocus
@@ -320,19 +322,19 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
                 ))}
               </div>
             )}
-            <p className="text-xs text-gray-400 mt-2">支持粘贴 (Ctrl+V) 或拖拽图片作为参考</p>
+            <p className="text-xs text-gray-400 mt-2">{t("ai.pasteImageHint")}</p>
             <div className="flex justify-end gap-2 mt-2">
-              <Btn variant="outline" size="sm" onClick={()=>{setShowAiPrompt(false);setAiImages([]);}}>取消</Btn>
-              <Btn size="sm" onClick={()=>aiOptimize()} className="bg-purple-600 hover:bg-purple-700 text-white">开始优化</Btn>
+              <Btn variant="outline" size="sm" onClick={()=>{setShowAiPrompt(false);setAiImages([]);}}>{t("common.cancel")}</Btn>
+              <Btn size="sm" onClick={()=>aiOptimize()} className="bg-purple-600 hover:bg-purple-700 text-white">{t("ai.startOptimize")}</Btn>
             </div>
           </div>}
         </div>
         <div className="relative">
           <Btn variant="outline" onClick={()=>{if(evalLoading)return;if(aiModels.length>1)setShowEvalPanel(!showEvalPanel);else runEval();}} disabled={evalLoading} className="border-cyan-300 text-cyan-600 hover:bg-cyan-50">
-            {evalLoading?"评测中...":"📊 AI 评测"}
+            {evalLoading?t("ai.evaluating"):t("ai.evaluate")}
           </Btn>
           {showEvalPanel&&aiModels.length>1&&!evalLoading&&<div className="absolute right-0 top-full mt-2 w-72 bg-white border border-cyan-200 rounded-xl shadow-xl p-3 z-50">
-            <p className="text-xs font-medium text-gray-700 mb-2">选择评测模型（可多选）</p>
+            <p className="text-xs font-medium text-gray-700 mb-2">{t("ai.selectEvalModels")}</p>
             <div className="space-y-1 max-h-40 overflow-y-auto">{aiModels.map(m=>(
               <label key={m.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-cyan-50 cursor-pointer">
                 <input type="checkbox" className="rounded accent-cyan-500" checked={evalModels.includes(m.id)} onChange={()=>toggleEvalModel(m.id)}/>
@@ -341,56 +343,56 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
               </label>
             ))}</div>
             <div className="flex justify-end gap-2 mt-2 pt-2 border-t border-gray-100">
-              <button onClick={()=>setEvalModels(aiModels.map(m=>m.id))} className="text-xs text-cyan-600">全选</button>
-              <Btn size="sm" onClick={()=>{setShowEvalPanel(false);runEval();}} className="bg-cyan-500 hover:bg-cyan-600 text-white">开始评测</Btn>
+              <button onClick={()=>setEvalModels(aiModels.map(m=>m.id))} className="text-xs text-cyan-600">{t("ai.selectAll")}</button>
+              <Btn size="sm" onClick={()=>{setShowEvalPanel(false);runEval();}} className="bg-cyan-500 hover:bg-cyan-600 text-white">{t("ai.startEval")}</Btn>
             </div>
           </div>}
         </div>
-        <Btn variant="outline" onClick={goBack}>取消</Btn>
-        {isCreate ? <Btn variant="success" onClick={create}>保存模版</Btn> : <Btn onClick={update}>保存修改</Btn>}
+        <Btn variant="outline" onClick={goBack}>{t("common.cancel")}</Btn>
+        {isCreate ? <Btn variant="success" onClick={create}>{t("template.save")}</Btn> : <Btn onClick={update}>{t("template.saveChanges")}</Btn>}
       </div>
     </div>
 
     {/* AI 优化结果（弹窗） */}
-    <Modal open={showAi} onClose={()=>setShowAi(false)} title="AI 优化建议" width={1000}>
+    <Modal open={showAi} onClose={()=>setShowAi(false)} title={t("ai.suggestions")} width={1000}>
       {aiResult&&<div className="space-y-4 max-h-[70vh] overflow-y-auto">
         <div className="bg-purple-50 border border-purple-200 rounded-xl p-4">
-          <h3 className="text-sm font-semibold text-purple-700 mb-2">优化建议</h3>
+          <h3 className="text-sm font-semibold text-purple-700 mb-2">{t("ai.suggestions")}</h3>
           <ul className="space-y-1.5">{aiResult.suggestions.map((s,i)=>(
             <li key={i} className="flex gap-2 text-sm text-purple-900"><span className="text-purple-400 flex-shrink-0">{i+1}.</span><span>{s}</span></li>
           ))}</ul>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
-            <p className="text-xs text-gray-400 mb-1">原始主题</p>
-            <p className="text-sm text-gray-700">{f.subject||"(空)"}</p>
+            <p className="text-xs text-gray-400 mb-1">{t("ai.originalSubject")}</p>
+            <p className="text-sm text-gray-700">{f.subject||t("template.empty")}</p>
           </div>
           <div className="bg-green-50 border border-green-200 rounded-lg p-3">
-            <p className="text-xs text-green-600 mb-1">优化后主题</p>
+            <p className="text-xs text-green-600 mb-1">{t("ai.optimizedSubject")}</p>
             <p className="text-sm text-green-800 font-medium">{aiResult.optimized_subject}</p>
           </div>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div className="border border-gray-200 rounded-lg overflow-hidden">
-            <div className="bg-gray-100 px-3 py-1.5 text-xs text-gray-500 font-medium border-b border-gray-200">原始内容</div>
-            <iframe srcDoc={aiPreviewHtml(f.html_body)} className="w-full border-0" style={{height:280}} sandbox="allow-same-origin" title="原始"/>
+            <div className="bg-gray-100 px-3 py-1.5 text-xs text-gray-500 font-medium border-b border-gray-200">{t("ai.originalContent")}</div>
+            <iframe srcDoc={aiPreviewHtml(f.html_body)} className="w-full border-0" style={{height:280}} sandbox="allow-same-origin" title="original"/>
           </div>
           <div className="border border-green-200 rounded-lg overflow-hidden">
-            <div className="bg-green-50 px-3 py-1.5 text-xs text-green-600 font-medium border-b border-green-200">优化后内容</div>
-            <iframe srcDoc={aiPreviewHtml(aiResult.optimized_html)} className="w-full border-0" style={{height:280}} sandbox="allow-same-origin" title="优化"/>
+            <div className="bg-green-50 px-3 py-1.5 text-xs text-green-600 font-medium border-b border-green-200">{t("ai.optimizedContent")}</div>
+            <iframe srcDoc={aiPreviewHtml(aiResult.optimized_html)} className="w-full border-0" style={{height:280}} sandbox="allow-same-origin" title="optimized"/>
           </div>
         </div>
         <div className="flex justify-end gap-3 pt-2 border-t border-gray-100">
-          <Btn variant="outline" onClick={()=>setShowAi(false)}>放弃</Btn>
-          <Btn onClick={applyAi} className="bg-purple-600 hover:bg-purple-700 text-white">采纳优化</Btn>
+          <Btn variant="outline" onClick={()=>setShowAi(false)}>{t("ai.discard")}</Btn>
+          <Btn onClick={applyAi} className="bg-purple-600 hover:bg-purple-700 text-white">{t("ai.apply")}</Btn>
         </div>
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mt-3">
-          <h3 className="text-sm font-semibold text-amber-700 mb-2">修改建议</h3>
+          <h3 className="text-sm font-semibold text-amber-700 mb-2">{t("ai.feedback")}</h3>
           <textarea
             value={aiFeedback}
             onChange={e=>setAiFeedback(e.target.value)}
             onPaste={e=>{const items=e.clipboardData?.items;if(items)for(let i=0;i<items.length;i++){if(items[i].type.startsWith("image/")){e.preventDefault();const file=items[i].getAsFile();if(file)uploadAiImage(file);return;}}}}
-            placeholder="输入修改建议，支持粘贴图片 (Ctrl+V)..."
+            placeholder={t("ai.feedbackPlaceholder")}
             className="w-full border border-amber-200 rounded-lg p-3 text-sm resize-none outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-300"
             rows={3}
           />
@@ -405,14 +407,14 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
               onClick={()=>aiOptimize(aiFeedback)}
               disabled={aiLoading||(!aiFeedback.trim()&&aiImages.length===0)}
               className="bg-amber-500 hover:bg-amber-600 text-white disabled:opacity-50"
-            >{aiLoading?"AI 重新优化中...":"🔄 基于建议再次优化"}</Btn>
+            >{aiLoading?t("ai.reOptimizing"):t("ai.reOptimize")}</Btn>
           </div>
         </div>
       </div>}
     </Modal>
 
     {/* AI 评测结果 */}
-    <Modal open={showEval} onClose={()=>setShowEval(false)} title="📊 AI 邮件评测报告" width={900}>
+    <Modal open={showEval} onClose={()=>setShowEval(false)} title={t("ai.evalReport")} width={900}>
       {evalResult?.models&&<div className="space-y-4 max-h-[75vh] overflow-y-auto">
         {/* 多模型对比综合分 */}
         {evalResult.models.length>1&&<div className="flex gap-4 justify-center py-3">
@@ -449,14 +451,14 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
                   <div className="flex items-center gap-2">
                     {evalResult.models.length>1&&<div className="flex gap-0.5">{evalResult.models.map((m2:any,j:number)=>{const d2=m2.dimensions?.find((x:any)=>x.name===d.name);return d2?<span key={j} className="text-xs px-1 rounded" style={{background:d2.score>=80?"#ECFDF5":d2.score>=60?"#FFFBEB":"#FEF2F2",color:d2.score>=80?"#10B981":d2.score>=60?"#F59E0B":"#EF4444"}}>{d2.score}</span>:null;})}</div>}
                     <span className="text-lg font-bold" style={{color}}>{d.score}</span>
-                    {d.issues?.length>0&&!fix&&<button onClick={()=>{setFixLoading(fixKey);getDimFix(d).then(()=>setFixLoading(""));}} disabled={fixLoading===fixKey} className="text-xs text-indigo-600 border border-indigo-200 rounded-lg px-2 py-0.5 hover:bg-indigo-50">{fixLoading===fixKey?"...":"✨ AI建议"}</button>}
+                    {d.issues?.length>0&&!fix&&<button onClick={()=>{setFixLoading(fixKey);getDimFix(d).then(()=>setFixLoading(""));}} disabled={fixLoading===fixKey} className="text-xs text-indigo-600 border border-indigo-200 rounded-lg px-2 py-0.5 hover:bg-indigo-50">{fixLoading===fixKey?"...":t("ai.dimFix")}</button>}
                   </div>
                 </div>
                 <div className="h-2 bg-gray-100 rounded-full overflow-hidden mb-2"><div className="h-full rounded-full" style={{width:`${d.score}%`,background:color}}/></div>
                 {d.issues?.length>0&&<div className="space-y-1">{d.issues.map((issue:string,j:number)=><p key={j} className="text-xs text-red-500 flex gap-1"><span>✗</span><span>{issue}</span></p>)}</div>}
                 {d.suggestions?.length>0&&<div className="space-y-1 mt-1">{d.suggestions.map((s:string,j:number)=><p key={j} className="text-xs text-green-600 flex gap-1"><span>→</span><span>{s}</span></p>)}</div>}
                 {fix&&<div className="mt-2 bg-indigo-50 border border-indigo-200 rounded-lg p-3 space-y-2">
-                  <p className="text-xs font-semibold text-indigo-700">AI 修复建议</p>
+                  <p className="text-xs font-semibold text-indigo-700">{t("ai.dimFixTitle")}</p>
                   {fix.key_changes&&<p className="text-xs text-indigo-600">{fix.key_changes}</p>}
                   {(fix.fixes||[]).map((fx:any,j:number)=><div key={j} className="space-y-1">
                     <p className="text-xs text-gray-700"><strong>{fx.issue}</strong>: {fx.fix}</p>
@@ -468,7 +470,7 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
           </div>;
         })()}
 
-        <div className="flex justify-end pt-2"><Btn variant="outline" onClick={()=>setShowEval(false)}>关闭</Btn></div>
+        <div className="flex justify-end pt-2"><Btn variant="outline" onClick={()=>setShowEval(false)}>{t("common.close")}</Btn></div>
       </div>}
     </Modal>
 
@@ -477,26 +479,26 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="text-sm font-medium text-gray-700 mb-1.5 block">模版名称</label>
-            {isCreate ? <Input placeholder="输入模版名称" value={f.name} onChange={(e:any)=>setF({...f,name:e.target.value})}/> : <Input value={f.name} disabled className="bg-gray-50 opacity-60"/>}
+            <label className="text-sm font-medium text-gray-700 mb-1.5 block">{t("template.name")}</label>
+            {isCreate ? <Input placeholder={t("template.namePlaceholder")} value={f.name} onChange={(e:any)=>setF({...f,name:e.target.value})}/> : <Input value={f.name} disabled className="bg-gray-50 opacity-60"/>}
           </div>
           <div>
-            <label className="text-sm font-medium text-gray-700 mb-1.5 block">邮件主题</label>
-            <Input placeholder="支持 {{name}} 变量" value={f.subject} onChange={(e:any)=>setF({...f,subject:e.target.value})}/>
+            <label className="text-sm font-medium text-gray-700 mb-1.5 block">{t("template.subject")}</label>
+            <Input placeholder={t("template.subjectPlaceholder")} value={f.subject} onChange={(e:any)=>setF({...f,subject:e.target.value})}/>
           </div>
         </div>
 
         <div>
           <div className="flex items-center justify-between mb-2">
-            <label className="text-sm font-medium text-gray-700">HTML 内容</label>
+            <label className="text-sm font-medium text-gray-700">{t("template.htmlContent")}</label>
             <div className="flex items-center">
-              <span className="text-xs text-gray-500 font-medium">HTML 源码 + 可视编辑</span>
+              <span className="text-xs text-gray-500 font-medium">{t("template.sourceAndVisual")}</span>
             </div>
           </div>
 
           {/* 工具栏 */}
           <div className="flex flex-wrap items-center gap-1 mb-2 p-2 bg-gray-50 border border-gray-200 rounded-t-lg">
-            <span className="text-xs text-gray-400 mr-1">插入：</span>
+            <span className="text-xs text-gray-400 mr-1">{t("template.toolbar.insert")}</span>
             {snippets.map(s=>(
               <button key={s.label} onClick={()=>insertSnippet(s.html)} title={s.label}
                 className="px-2 py-1 text-xs bg-white border border-gray-200 rounded-md hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-600 transition-all text-gray-600">
@@ -507,14 +509,14 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
             <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={e=>{const file=e.target.files?.[0];if(file)uploadImage(file);e.target.value="";}}/>
             <button onClick={()=>fileInputRef.current?.click()} disabled={uploading}
               className="px-2 py-1 text-xs bg-emerald-50 border border-emerald-200 rounded-md hover:bg-emerald-100 transition-all text-emerald-700 disabled:opacity-50">
-              {uploading?"上传中...":"上传图片"}
+              {uploading?t("template.uploading"):t("template.uploadImage")}
             </button>
-            <button onClick={()=>insertSnippet('<div style="text-align:center;padding:16px 0;margin-top:24px;border-top:1px solid #eee;"><a href="{{unsubscribe_url}}" style="color:#999;font-size:12px;text-decoration:underline;">取消订阅 / Unsubscribe</a></div>\n')}
+            <button onClick={()=>insertSnippet(`<div style="text-align:center;padding:16px 0;margin-top:24px;border-top:1px solid #eee;"><a href="{{unsubscribe_url}}" style="color:#999;font-size:12px;text-decoration:underline;">${t("template.snippet.unsubText")} / Unsubscribe</a></div>\n`)}
               className="px-2 py-1 text-xs bg-red-50 border border-red-200 rounded-md hover:bg-red-100 transition-all text-red-600">
-              退订链接
+              {t("template.unsubLink")}
             </button>
             <span className="w-px h-5 bg-gray-200 mx-1"/>
-            <span className="text-xs text-gray-400 mr-1">变量：</span>
+            <span className="text-xs text-gray-400 mr-1">{t("template.toolbar.variables")}</span>
             {variables.map(v=>(
               <button key={v.val} onClick={()=>insertVariable(v.val)}
                 className="px-2 py-1 text-xs bg-amber-50 border border-amber-200 rounded-md hover:bg-amber-100 transition-all text-amber-700 font-mono">
@@ -529,13 +531,13 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
             <div className="w-1/2 border-r border-gray-200 flex flex-col">
                 <div className="bg-gray-50 px-3 py-1.5 border-b border-gray-200 flex items-center gap-1.5 flex-shrink-0">
                   <span className="w-2.5 h-2.5 rounded-full bg-red-400"/><span className="w-2.5 h-2.5 rounded-full bg-yellow-400"/><span className="w-2.5 h-2.5 rounded-full bg-green-400"/>
-                  <span className="text-xs text-gray-400 ml-2">HTML 源码</span>
+                  <span className="text-xs text-gray-400 ml-2">{t("template.htmlSource")}</span>
                 </div>
                 <textarea
                   value={f.html_body}
                   onChange={e=>setF({...f,html_body:e.target.value})}
                   onPaste={handlePaste}
-                  placeholder={"在此编写 HTML 邮件内容...\n\n支持：粘贴图片 (Ctrl+V) / 拖拽图片到此处"}
+                  placeholder={t("template.htmlPlaceholder")}
                   className="w-full flex-1 p-3 text-sm font-mono resize-none outline-none"
                   style={{background:"#1e1e2e",color:"#a6e3a1",caretColor:"#fff"}}
                   spellCheck={false}
@@ -543,14 +545,14 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
             </div>
             <div className="w-1/2 flex flex-col">
                 <div className="bg-gray-50 px-3 py-1.5 border-b border-gray-200 flex items-center gap-1.5 flex-shrink-0">
-                  <span className="text-xs text-gray-400">可视编辑</span>
-                  <span className="text-xs text-indigo-500 ml-auto">可直接编辑，失焦后同步</span>
+                  <span className="text-xs text-gray-400">{t("template.visualEdit")}</span>
+                  <span className="text-xs text-indigo-500 ml-auto">{t("template.editSync")}</span>
                 </div>
                 <div className="bg-white flex-1">
                   <iframe
                     ref={initSplitIframe}
                     className="w-full border-0 h-full"
-                    title="可视编辑"
+                    title={t("template.visualEdit")}
                   />
                 </div>
             </div>

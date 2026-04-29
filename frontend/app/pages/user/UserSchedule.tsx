@@ -1,30 +1,38 @@
 "use client";
 import React, { useState, useEffect } from "react";
 import { API, authH, useAuth, useToast, useConfirm, Card, Badge, Btn, Input, Select, Modal } from "../../components/shared";
+import { useT } from "../../i18n";
 
-const TYPES:{[k:string]:string}={once:"单次定时",daily:"每天",weekly:"每周",monthly:"每月"};
-const DAYS=["周一","周二","周三","周四","周五","周六","周日"];
-const STATUS_MAP:{[k:string]:{label:string;color:string}}={
-  active:{label:"运行中",color:"green"},paused:{label:"已暂停",color:"gray"},
-  completed:{label:"已完成",color:"blue"},cancelled:{label:"已取消",color:"red"},
-};
+function buildTypes(t:(k:string)=>string):{[k:string]:string}{
+  return {once:t("schedule.typeOnce"),daily:t("schedule.typeDaily"),weekly:t("schedule.typeWeekly"),monthly:t("schedule.typeMonthly")};
+}
+function buildDays(t:(k:string)=>string):string[]{
+  return [t("week.mon"),t("week.tue"),t("week.wed"),t("week.thu"),t("week.fri"),t("week.sat"),t("week.sun")];
+}
+function buildStatusMap(t:(k:string)=>string):{[k:string]:{label:string;color:string}}{
+  return {
+    active:{label:t("status.active"),color:"green"},paused:{label:t("status.paused"),color:"gray"},
+    completed:{label:t("status.completed"),color:"blue"},cancelled:{label:t("status.cancelled"),color:"red"},
+  };
+}
+
 const TIMEZONES=[
-  {value:"UTC",label:"UTC (协调世界时)",offset:0},
-  {value:"Asia/Shanghai",label:"Asia/Shanghai (北京时间 UTC+8)",offset:8},
-  {value:"Asia/Tokyo",label:"Asia/Tokyo (东京 UTC+9)",offset:9},
-  {value:"Asia/Singapore",label:"Asia/Singapore (新加坡 UTC+8)",offset:8},
-  {value:"Asia/Kolkata",label:"Asia/Kolkata (印度 UTC+5:30)",offset:5.5},
-  {value:"Asia/Dubai",label:"Asia/Dubai (迪拜 UTC+4)",offset:4},
-  {value:"Europe/London",label:"Europe/London (伦敦 UTC+0/+1)",offset:0},
-  {value:"Europe/Berlin",label:"Europe/Berlin (柏林 UTC+1/+2)",offset:1},
-  {value:"Europe/Paris",label:"Europe/Paris (巴黎 UTC+1/+2)",offset:1},
-  {value:"America/New_York",label:"America/New_York (纽约 UTC-5/-4)",offset:-5},
-  {value:"America/Chicago",label:"America/Chicago (芝加哥 UTC-6/-5)",offset:-6},
-  {value:"America/Denver",label:"America/Denver (丹佛 UTC-7/-6)",offset:-7},
-  {value:"America/Los_Angeles",label:"America/Los_Angeles (洛杉矶 UTC-8/-7)",offset:-8},
-  {value:"America/Sao_Paulo",label:"America/Sao_Paulo (圣保罗 UTC-3)",offset:-3},
-  {value:"Australia/Sydney",label:"Australia/Sydney (悉尼 UTC+10/+11)",offset:10},
-  {value:"Pacific/Auckland",label:"Pacific/Auckland (奥克兰 UTC+12/+13)",offset:12},
+  {value:"UTC",label:"UTC",offset:0},
+  {value:"Asia/Shanghai",label:"Asia/Shanghai (UTC+8)",offset:8},
+  {value:"Asia/Tokyo",label:"Asia/Tokyo (UTC+9)",offset:9},
+  {value:"Asia/Singapore",label:"Asia/Singapore (UTC+8)",offset:8},
+  {value:"Asia/Kolkata",label:"Asia/Kolkata (UTC+5:30)",offset:5.5},
+  {value:"Asia/Dubai",label:"Asia/Dubai (UTC+4)",offset:4},
+  {value:"Europe/London",label:"Europe/London (UTC+0/+1)",offset:0},
+  {value:"Europe/Berlin",label:"Europe/Berlin (UTC+1/+2)",offset:1},
+  {value:"Europe/Paris",label:"Europe/Paris (UTC+1/+2)",offset:1},
+  {value:"America/New_York",label:"America/New_York (UTC-5/-4)",offset:-5},
+  {value:"America/Chicago",label:"America/Chicago (UTC-6/-5)",offset:-6},
+  {value:"America/Denver",label:"America/Denver (UTC-7/-6)",offset:-7},
+  {value:"America/Los_Angeles",label:"America/Los_Angeles (UTC-8/-7)",offset:-8},
+  {value:"America/Sao_Paulo",label:"America/Sao_Paulo (UTC-3)",offset:-3},
+  {value:"Australia/Sydney",label:"Australia/Sydney (UTC+10/+11)",offset:10},
+  {value:"Pacific/Auckland",label:"Pacific/Auckland (UTC+12/+13)",offset:12},
 ];
 
 function localToUtcHour(hour:number, minute:number, tz:string):{h:number;m:number}{
@@ -44,7 +52,8 @@ function guessTimezone():string{
 }
 
 export default function UserSchedule() {
-  const {token}=useAuth(); const {toast}=useToast(); const {confirm:cfm}=useConfirm();
+  const {token}=useAuth(); const {toast}=useToast(); const {confirm:cfm}=useConfirm(); const t=useT();
+  const TYPES=buildTypes(t); const DAYS=buildDays(t); const STATUS_MAP=buildStatusMap(t);
   const [jobs,setJobs]=useState<any[]>([]);
   const [ts,setTs]=useState<any[]>([]); const [gs,setGs]=useState<any[]>([]);
   const [show,setShow]=useState(false);
@@ -59,8 +68,8 @@ export default function UserSchedule() {
     Promise.all([
       fetch(`${API}/user/templates`,{headers:authH(token)}).then(r=>r.json()),
       fetch(`${API}/groups`,{headers:authH(token)}).then(r=>r.json()),
-    ]).then(([t,g])=>{
-      setTs(Array.isArray(t)?t:[]);
+    ]).then(([tpl,g])=>{
+      setTs(Array.isArray(tpl)?tpl:[]);
       setGs(Array.isArray(g?.items)?g.items:Array.isArray(g)?g:[]);
     });
   },[]);
@@ -71,8 +80,8 @@ export default function UserSchedule() {
   };
 
   const create=async()=>{
-    if(!f.template_id||!f.group_id) return toast("warning","请选择模版和客群");
-    if(f.schedule_type==="once"&&!f.scheduled_time) return toast("warning","请选择发送时间");
+    if(!f.template_id||!f.group_id) return toast("warning",t("schedule.selectBoth"));
+    if(f.schedule_type==="once"&&!f.scheduled_time) return toast("warning",t("schedule.selectTimeError"));
 
     const payload:any={
       template_id:parseInt(f.template_id),group_id:parseInt(f.group_id),
@@ -81,7 +90,7 @@ export default function UserSchedule() {
 
     if(f.schedule_type==="once"){
       const [datePart,timePart] = f.scheduled_time.split("T");
-      if(!datePart||!timePart) return toast("warning","请选择有效的发送时间");
+      if(!datePart||!timePart) return toast("warning",t("schedule.selectValidTime"));
       const [yyyy,mm,dd] = datePart.split("-").map(Number);
       const [hh,mi] = timePart.split(":").map(Number);
       const tzInfo = TIMEZONES.find(t=>t.value===f.timezone);
@@ -102,20 +111,20 @@ export default function UserSchedule() {
     if(f.schedule_type==="monthly") payload.day_of_month=f.day_of_month;
 
     const r=await fetch(`${API}/scheduled-jobs`,{method:"POST",headers:authH(token),body:JSON.stringify(payload)});
-    if(r.ok){toast("success","定时任务创建成功");setShow(false);load();}
-    else{const e=await r.json();toast("error","创建失败",e.detail);}
+    if(r.ok){toast("success",t("schedule.created"));setShow(false);load();}
+    else{const e=await r.json();toast("error",t("schedule.createFailed"),e.detail);}
   };
 
   const togglePause=async(j:any)=>{
     const newStatus=j.status==="active"?"paused":"active";
     const r=await fetch(`${API}/scheduled-jobs/${j.id}`,{method:"PUT",headers:authH(token),body:JSON.stringify({status:newStatus})});
-    if(r.ok){toast("success",newStatus==="active"?"已恢复":"已暂停");load();}
+    if(r.ok){toast("success",newStatus==="active"?t("schedule.resumed"):t("schedule.paused"));load();}
   };
 
   const del=async(j:any)=>{
-    if(!await cfm("删除任务",`确定删除定时任务「${j.template_name} → ${j.group_name}」？`))return;
+    if(!await cfm(t("schedule.deleteTitle"),t("schedule.deleteConfirm",{template:j.template_name,group:j.group_name})))return;
     const r=await fetch(`${API}/scheduled-jobs/${j.id}`,{method:"DELETE",headers:authH(token)});
-    if(r.ok){toast("success","已删除");load();}
+    if(r.ok){toast("success",t("schedule.deleted"));load();}
   };
 
   const fmtTime=(iso:string|null)=>iso?new Date(iso).toLocaleString():"-";
@@ -123,40 +132,40 @@ export default function UserSchedule() {
     const hh=String(j.cron_hour).padStart(2,"0");
     const mm=String(j.cron_minute).padStart(2,"0");
     if(j.schedule_type==="once") return fmtTime(j.scheduled_time);
-    if(j.schedule_type==="daily") return `每天 ${hh}:${mm} UTC`;
-    if(j.schedule_type==="weekly") return `每${DAYS[j.day_of_week||0]} ${hh}:${mm} UTC`;
-    if(j.schedule_type==="monthly") return `每月 ${j.day_of_month||1}日 ${hh}:${mm} UTC`;
+    if(j.schedule_type==="daily") return t("schedule.descDaily",{time:`${hh}:${mm}`});
+    if(j.schedule_type==="weekly") return t("schedule.descWeekly",{day:DAYS[j.day_of_week||0],time:`${hh}:${mm}`});
+    if(j.schedule_type==="monthly") return t("schedule.descMonthly",{day:j.day_of_month||1,time:`${hh}:${mm}`});
     return "-";
   };
 
   const utcPreview=()=>{
     if(f.schedule_type==="once") return null;
     const utc=localToUtcHour(f.cron_hour,f.cron_minute,f.timezone);
-    return `= UTC ${String(utc.h).padStart(2,"0")}:${String(utc.m).padStart(2,"0")}`;
+    return t("schedule.utcPreview",{time:`${String(utc.h).padStart(2,"0")}:${String(utc.m).padStart(2,"0")}`});
   };
 
   return <>
-    <Modal open={show} onClose={()=>setShow(false)} title="创建定时发送任务" width={560}>
+    <Modal open={show} onClose={()=>setShow(false)} title={t("schedule.createTitle")} width={560}>
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="text-sm font-medium text-gray-700 mb-1.5 block">邮件模版</label>
+            <label className="text-sm font-medium text-gray-700 mb-1.5 block">{t("send.emailTemplate")}</label>
             <Select value={f.template_id} onChange={(e:any)=>setF({...f,template_id:e.target.value})}>
-              <option value="">选择模版</option>
-              {ts.map((t:any)=><option key={t.id} value={t.id}>{t.name}</option>)}
+              <option value="">{t("schedule.selectTemplate")}</option>
+              {ts.map((tpl:any)=><option key={tpl.id} value={tpl.id}>{tpl.name}</option>)}
             </Select>
           </div>
           <div>
-            <label className="text-sm font-medium text-gray-700 mb-1.5 block">目标客群</label>
+            <label className="text-sm font-medium text-gray-700 mb-1.5 block">{t("send.targetGroup")}</label>
             <Select value={f.group_id} onChange={(e:any)=>setF({...f,group_id:e.target.value})}>
-              <option value="">选择客群</option>
+              <option value="">{t("schedule.selectGroup")}</option>
               {gs.map((g:any)=><option key={g.id} value={g.id}>{g.name}</option>)}
             </Select>
           </div>
         </div>
 
         <div>
-          <label className="text-sm font-medium text-gray-700 mb-1.5 block">发送类型</label>
+          <label className="text-sm font-medium text-gray-700 mb-1.5 block">{t("schedule.sendType")}</label>
           <div className="flex gap-2">
             {Object.entries(TYPES).map(([k,v])=>(
               <button key={k} onClick={()=>setF({...f,schedule_type:k})}
@@ -166,7 +175,7 @@ export default function UserSchedule() {
         </div>
 
         <div>
-          <label className="text-sm font-medium text-gray-700 mb-1.5 block">时区</label>
+          <label className="text-sm font-medium text-gray-700 mb-1.5 block">{t("schedule.timezone")}</label>
           <Select value={f.timezone} onChange={(e:any)=>setF({...f,timezone:e.target.value})}>
             {TIMEZONES.map(tz=><option key={tz.value} value={tz.value}>{tz.label}</option>)}
           </Select>
@@ -174,16 +183,16 @@ export default function UserSchedule() {
 
         {f.schedule_type==="once"&&(
           <div>
-            <label className="text-sm font-medium text-gray-700 mb-1.5 block">发送时间</label>
+            <label className="text-sm font-medium text-gray-700 mb-1.5 block">{t("schedule.sendTime")}</label>
             <Input type="datetime-local" value={f.scheduled_time} onChange={(e:any)=>setF({...f,scheduled_time:e.target.value})}/>
-            <p className="text-xs text-gray-400 mt-1">按所选时区 ({f.timezone}) 的本地时间</p>
+            <p className="text-xs text-gray-400 mt-1">{t("schedule.localTime",{tz:f.timezone})}</p>
           </div>
         )}
 
         {f.schedule_type!=="once"&&(
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-sm font-medium text-gray-700 mb-1.5 block">执行时间</label>
+              <label className="text-sm font-medium text-gray-700 mb-1.5 block">{t("schedule.execTime")}</label>
               <div className="flex gap-2 items-center">
                 <Input type="number" min={0} max={23} value={f.cron_hour} onChange={(e:any)=>setF({...f,cron_hour:parseInt(e.target.value)||0})} className="w-20"/>
                 <span className="text-gray-400 font-bold">:</span>
@@ -193,7 +202,7 @@ export default function UserSchedule() {
             </div>
             {f.schedule_type==="weekly"&&(
               <div>
-                <label className="text-sm font-medium text-gray-700 mb-1.5 block">星期几</label>
+                <label className="text-sm font-medium text-gray-700 mb-1.5 block">{t("schedule.dayOfWeek")}</label>
                 <Select value={f.day_of_week} onChange={(e:any)=>setF({...f,day_of_week:parseInt(e.target.value)})}>
                   {DAYS.map((d,i)=><option key={i} value={i}>{d}</option>)}
                 </Select>
@@ -201,7 +210,7 @@ export default function UserSchedule() {
             )}
             {f.schedule_type==="monthly"&&(
               <div>
-                <label className="text-sm font-medium text-gray-700 mb-1.5 block">每月几号</label>
+                <label className="text-sm font-medium text-gray-700 mb-1.5 block">{t("schedule.dayOfMonth")}</label>
                 <Input type="number" min={1} max={31} value={f.day_of_month} onChange={(e:any)=>setF({...f,day_of_month:parseInt(e.target.value)||1})}/>
               </div>
             )}
@@ -209,17 +218,17 @@ export default function UserSchedule() {
         )}
 
         <div className="flex justify-end gap-2 pt-2">
-          <Btn variant="outline" onClick={()=>setShow(false)}>取消</Btn>
-          <Btn variant="success" onClick={create}>创建任务</Btn>
+          <Btn variant="outline" onClick={()=>setShow(false)}>{t("common.cancel")}</Btn>
+          <Btn variant="success" onClick={create}>{t("schedule.createBtn")}</Btn>
         </div>
       </div>
     </Modal>
 
-    <Card title="定时发送任务" extra={<Btn size="sm" onClick={openCreate}>+ 创建定时任务</Btn>}>
-      {jobs.length===0?<p className="text-center py-8 text-sm text-gray-400">暂无定时任务</p>:
+    <Card title={t("schedule.title")} extra={<Btn size="sm" onClick={openCreate}>{t("schedule.create")}</Btn>}>
+      {jobs.length===0?<p className="text-center py-8 text-sm text-gray-400">{t("schedule.noTasks")}</p>:
       <div className="overflow-x-auto"><table className="w-full">
         <thead><tr className="border-b border-gray-100">
-          {["模版","客群","类型","执行计划","状态","已执行","下次执行","操作"].map(h=><th key={h} className="text-left text-xs font-medium text-gray-500 py-3 px-3">{h}</th>)}
+          {[t("schedule.tableTemplate"),t("schedule.tableGroup"),t("schedule.tableType"),t("schedule.tablePlan"),t("schedule.tableStatus"),t("schedule.tableExecCount"),t("schedule.tableNextRun"),t("schedule.tableActions")].map(h=><th key={h} className="text-left text-xs font-medium text-gray-500 py-3 px-3">{h}</th>)}
         </tr></thead>
         <tbody>{jobs.map((j:any)=>{
           const st=STATUS_MAP[j.status]||{label:j.status,color:"gray"};
@@ -229,16 +238,16 @@ export default function UserSchedule() {
             <td className="py-3 px-3"><Badge color="blue">{TYPES[j.schedule_type]||j.schedule_type}</Badge></td>
             <td className="py-3 px-3 text-xs text-gray-500">{descSchedule(j)}</td>
             <td className="py-3 px-3"><Badge color={st.color as any}>{st.label}</Badge></td>
-            <td className="py-3 px-3 text-sm text-gray-500">{j.run_count} 次</td>
+            <td className="py-3 px-3 text-sm text-gray-500">{t("schedule.execCount",{count:j.run_count})}</td>
             <td className="py-3 px-3 text-xs text-gray-400">{j.next_run_at?fmtTime(j.next_run_at):"-"}</td>
             <td className="py-3 px-3">
               <div className="flex gap-1">
                 {(j.status==="active"||j.status==="paused")&&(
                   <Btn variant={j.status==="active"?"warning":"success"} size="sm" onClick={()=>togglePause(j)}>
-                    {j.status==="active"?"暂停":"恢复"}
+                    {j.status==="active"?t("schedule.pause"):t("schedule.resume")}
                   </Btn>
                 )}
-                <Btn variant="danger" size="sm" onClick={()=>del(j)}>删除</Btn>
+                <Btn variant="danger" size="sm" onClick={()=>del(j)}>{t("common.delete")}</Btn>
               </div>
               {j.error_message&&<p className="text-xs text-red-400 mt-1">{j.error_message}</p>}
             </td>

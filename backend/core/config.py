@@ -28,3 +28,10 @@ UNSUBSCRIBE_BASE_URL = os.getenv("UNSUBSCRIBE_BASE_URL", "")
 # AWS Bedrock（AI 邮件优化）
 BEDROCK_MODEL_ID = os.getenv("BEDROCK_MODEL_ID", "global.anthropic.claude-opus-4-6-v1")
 BEDROCK_REGION = os.getenv("BEDROCK_REGION", os.getenv("AWS_REGION", "us-east-1"))
+
+# Sender Engine（单 Writer 模式）
+ENABLE_SENDER = os.getenv("ENABLE_SENDER", "true").lower() in ("true", "1", "yes")
+SENDER_CONCURRENCY = int(os.getenv("SENDER_CONCURRENCY", "2"))
+SENDER_MESSAGE_RATE = int(os.getenv("SENDER_MESSAGE_RATE", "0"))  # 0=auto from SES MaxSendRate
+SENDER_SLIDING_WINDOW_SECONDS = int(os.getenv("SENDER_SLIDING_WINDOW_SECONDS", "0"))
+SENDER_SLIDING_WINDOW_RATE = int(os.getenv("SENDER_SLIDING_WINDOW_RATE", "0"))

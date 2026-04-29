@@ -1,22 +1,19 @@
 "use client";
 import React, { useState, useEffect } from "react";
 import { API, authH, useAuth, useToast, Card, Btn, Input, Select, Badge } from "../../components/shared";
+import { useT } from "../../i18n";
 
 import UnsubPageEditor, { DEFAULT_REASONS } from "../shared/UnsubPageEditor";
 
-const AUTH_MODES=[
-  {id:"iam_role",label:"IAM Role",desc:"使用 EC2 实例角色调用（推荐，无需配置密钥）",color:"green"},
-  {id:"ak_sk",label:"AK/SK",desc:"使用 AWS Access Key ID + Secret Access Key",color:"blue"},
-  {id:"api_key",label:"Bedrock API Key",desc:"使用 Bedrock 原生 API Key（Bearer Token）",color:"purple"},
-];
 const REGIONS=["us-east-1","us-west-2","eu-west-1","eu-central-1","ap-northeast-1","ap-southeast-1","ap-southeast-2","ap-south-1"];
 
 export default function AdminSettings() {
   const [subTab,setSubTab]=useState<"ai"|"image"|"unsub"|"sso">("ai");
+  const t=useT();
 
   return <div>
     <div className="flex gap-1 mb-5 bg-gray-100 rounded-lg p-1 w-fit">
-      {([["ai","AI 模型"],["image","图片存储"],["unsub","退订页面"],["sso","SSO 登录"]] as const).map(([id,label])=>(
+      {([["ai",t("settings.tabAi")],["image",t("settings.tabImage")],["unsub",t("settings.tabUnsub")],["sso",t("settings.tabSso")]] as const).map(([id,label])=>(
         <button key={id} onClick={()=>setSubTab(id)} className={`px-5 py-2 text-sm rounded-md transition-all ${subTab===id?"bg-white text-indigo-600 shadow-sm font-medium":"text-gray-500 hover:text-gray-700"}`}>{label}</button>
       ))}
     </div>
@@ -28,7 +25,7 @@ export default function AdminSettings() {
 }
 
 function useSettings() {
-  const {token}=useAuth(); const {toast}=useToast();
+  const {token}=useAuth(); const {toast}=useToast(); const t=useT();
   const [loading,setLoading]=useState(true);
   const [saving,setSaving]=useState(false);
   const [f,setF]=useState<any>({});
@@ -44,16 +41,16 @@ function useSettings() {
     setSaving(true);
     try{
       const r=await fetch(`${API}/admin/settings`,{method:"PUT",headers:authH(token),body:JSON.stringify(payload)});
-      if(r.ok)toast("success","配置已保存");else{const e=await r.json();toast("error","保存失败",e.detail);}
-    }catch{toast("error","网络错误");}
+      if(r.ok)toast("success",t("common.savedMsg"));else{const e=await r.json();toast("error",t("common.operationFailed"),e.detail);}
+    }catch{toast("error",t("common.networkError"));}
     finally{setSaving(false);}
   };
 
-  return {token,toast,loading,saving,f,setF,save};
+  return {token,toast,loading,saving,f,setF,save,t};
 }
 
 function AiSettings() {
-  const {token}=useAuth(); const {toast}=useToast();
+  const {token}=useAuth(); const {toast}=useToast(); const t=useT();
   const [providers,setProviders]=useState<any[]>([]);
   const [loading,setLoading]=useState(true);
   const [saving,setSaving]=useState(false);
@@ -65,7 +62,7 @@ function AiSettings() {
 
   const saveAll=async(list?:any[])=>{
     setSaving(true);
-    try{const r=await fetch(`${API}/admin/ai-models`,{method:"PUT",headers:authH(token),body:JSON.stringify({models:list||providers})});if(r.ok)toast("success","已保存");else{const e=await r.json();toast("error","失败",e.detail);}}catch{toast("error","网络错误");}finally{setSaving(false);}
+    try{const r=await fetch(`${API}/admin/ai-models`,{method:"PUT",headers:authH(token),body:JSON.stringify({models:list||providers})});if(r.ok)toast("success",t("common.savedMsg"));else{const e=await r.json();toast("error",t("common.failed"),e.detail);}}catch{toast("error",t("common.networkError"));}finally{setSaving(false);}
   };
 
   const addProvider=(type:string)=>{
@@ -94,68 +91,66 @@ function AiSettings() {
     const p=providers[pIdx];const m=p.models[mIdx];
     const mid=m.id;setTestingModel(mid);setTestResult(null);
     const body:any={...p,test_model:m.model_id||m.model};delete body.models;
-    try{const r=await fetch(`${API}/admin/ai-models/test`,{method:"POST",headers:authH(token),body:JSON.stringify(body)});const d=await r.json();setTestResult({mid,...d});if(d.success)toast("success","测试通过");else toast("error","测试失败",d.error);}catch{toast("error","网络错误");}finally{setTestingModel("");}
+    try{const r=await fetch(`${API}/admin/ai-models/test`,{method:"POST",headers:authH(token),body:JSON.stringify(body)});const d=await r.json();setTestResult({mid,...d});if(d.success)toast("success",t("settings.ai.testPassed"));else toast("error",t("settings.ai.testFailed"),d.error);}catch{toast("error",t("common.networkError"));}finally{setTestingModel("");}
   };
 
-  if(loading) return <div className="flex items-center justify-center h-32 text-gray-400">加载中...</div>;
+  if(loading) return <div className="flex items-center justify-center h-32 text-gray-400">{t("common.loading")}</div>;
 
   return <div className="max-w-4xl space-y-4">
     <div className="flex items-center justify-between">
-      <h3 className="text-sm font-medium text-gray-600">AI Provider 列表</h3>
+      <h3 className="text-sm font-medium text-gray-600">{t("settings.ai.title")}</h3>
       <div className="flex gap-2">
-        <Btn size="sm" onClick={()=>addProvider("bedrock")} className="bg-orange-500 hover:bg-orange-600 text-white">+ AWS Bedrock</Btn>
-        <Btn size="sm" onClick={()=>addProvider("openai_compatible")} className="bg-blue-500 hover:bg-blue-600 text-white">+ OpenAI 兼容</Btn>
+        <Btn size="sm" onClick={()=>addProvider("bedrock")} className="bg-orange-500 hover:bg-orange-600 text-white">{t("settings.ai.addBedrock")}</Btn>
+        <Btn size="sm" onClick={()=>addProvider("openai_compatible")} className="bg-blue-500 hover:bg-blue-600 text-white">{t("settings.ai.addOpenai")}</Btn>
       </div>
     </div>
 
-    {providers.length===0&&<Card><p className="text-center py-8 text-sm text-gray-400">暂未配置 AI Provider，点击上方按钮添加</p></Card>}
+    {providers.length===0&&<Card><p className="text-center py-8 text-sm text-gray-400">{t("settings.ai.noProviders")}</p></Card>}
 
     {providers.map((p,pi)=><Card key={p.id}>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3 cursor-pointer flex-1" onClick={()=>setExpandIdx(expandIdx===pi?null:pi)}>
           <span className="text-lg">{p.type==="bedrock"?"☁️":"🔗"}</span>
           <Badge color={p.type==="bedrock"?"orange":"blue"}>{p.type==="bedrock"?"Bedrock":"OpenAI"}</Badge>
-          <span className="text-sm font-semibold text-gray-800">{p.name||"(未命名)"}</span>
-          <span className="text-xs text-gray-400">{(p.models||[]).length} 个模型</span>
+          <span className="text-sm font-semibold text-gray-800">{p.name||t("settings.ai.unnamed")}</span>
+          <span className="text-xs text-gray-400">{t("settings.ai.models",{count:(p.models||[]).length})}</span>
           <span className="text-xs text-gray-300">{expandIdx===pi?"▼":"▶"}</span>
         </div>
-        <Btn size="sm" variant="danger" onClick={()=>removeProvider(pi)}>删除</Btn>
+        <Btn size="sm" variant="danger" onClick={()=>removeProvider(pi)}>{t("common.delete")}</Btn>
       </div>
 
       {expandIdx===pi&&<div className="mt-4 space-y-4 border-t border-gray-100 pt-4">
-        {/* Provider 配置 */}
         <div className="grid grid-cols-3 gap-3">
-          <div><label className="text-xs font-medium text-gray-600 mb-1 block">Provider 名称</label><Input value={p.name||""} onChange={(e:any)=>updateProvider(pi,"name",e.target.value)} placeholder={p.type==="bedrock"?"AWS Bedrock":"My LiteLLM"}/></div>
+          <div><label className="text-xs font-medium text-gray-600 mb-1 block">{t("settings.ai.providerName")}</label><Input value={p.name||""} onChange={(e:any)=>updateProvider(pi,"name",e.target.value)} placeholder={p.type==="bedrock"?"AWS Bedrock":"My LiteLLM"}/></div>
           {p.type==="bedrock"&&<>
-            <div><label className="text-xs font-medium text-gray-600 mb-1 block">区域</label><Select value={p.region||""} onChange={(e:any)=>updateProvider(pi,"region",e.target.value)}><option value="">默认</option>{REGIONS.map(r=><option key={r} value={r}>{r}</option>)}</Select></div>
-            <div><label className="text-xs font-medium text-gray-600 mb-1 block">认证方式</label><Select value={p.auth_mode||"iam_role"} onChange={(e:any)=>updateProvider(pi,"auth_mode",e.target.value)}><option value="iam_role">IAM Role</option><option value="ak_sk">AK/SK</option><option value="api_key">Bedrock API Key</option></Select></div>
+            <div><label className="text-xs font-medium text-gray-600 mb-1 block">{t("settings.ai.region")}</label><Select value={p.region||""} onChange={(e:any)=>updateProvider(pi,"region",e.target.value)}><option value="">{t("settings.ai.defaultRegion")}</option>{REGIONS.map(r=><option key={r} value={r}>{r}</option>)}</Select></div>
+            <div><label className="text-xs font-medium text-gray-600 mb-1 block">{t("settings.ai.authMode")}</label><Select value={p.auth_mode||"iam_role"} onChange={(e:any)=>updateProvider(pi,"auth_mode",e.target.value)}><option value="iam_role">{t("settings.ai.iamRole")}</option><option value="ak_sk">{t("settings.ai.aksk")}</option><option value="api_key">{t("settings.ai.apiKeyMode")}</option></Select></div>
           </>}
           {p.type==="openai_compatible"&&<>
-            <div><label className="text-xs font-medium text-gray-600 mb-1 block">API Base URL</label><Input value={p.api_base||""} onChange={(e:any)=>updateProvider(pi,"api_base",e.target.value)} placeholder="https://api.openai.com/v1"/></div>
-            <div><label className="text-xs font-medium text-gray-600 mb-1 block">API Key</label><Input type="password" value={p.api_key||""} onChange={(e:any)=>updateProvider(pi,"api_key",e.target.value)} placeholder="可选"/></div>
+            <div><label className="text-xs font-medium text-gray-600 mb-1 block">{t("settings.ai.apiBase")}</label><Input value={p.api_base||""} onChange={(e:any)=>updateProvider(pi,"api_base",e.target.value)} placeholder="https://api.openai.com/v1"/></div>
+            <div><label className="text-xs font-medium text-gray-600 mb-1 block">{t("settings.ai.apiKey")}</label><Input type="password" value={p.api_key||""} onChange={(e:any)=>updateProvider(pi,"api_key",e.target.value)} placeholder={t("settings.ai.optional")}/></div>
           </>}
         </div>
         {p.type==="bedrock"&&p.auth_mode==="ak_sk"&&<div className="grid grid-cols-2 gap-3">
-          <div><label className="text-xs font-medium text-gray-600 mb-1 block">Access Key</label><Input value={p.access_key||""} onChange={(e:any)=>updateProvider(pi,"access_key",e.target.value)}/></div>
-          <div><label className="text-xs font-medium text-gray-600 mb-1 block">Secret Key</label><Input type="password" value={p.secret_key||""} onChange={(e:any)=>updateProvider(pi,"secret_key",e.target.value)}/></div>
+          <div><label className="text-xs font-medium text-gray-600 mb-1 block">{t("settings.ai.accessKey")}</label><Input value={p.access_key||""} onChange={(e:any)=>updateProvider(pi,"access_key",e.target.value)}/></div>
+          <div><label className="text-xs font-medium text-gray-600 mb-1 block">{t("settings.ai.secretKey")}</label><Input type="password" value={p.secret_key||""} onChange={(e:any)=>updateProvider(pi,"secret_key",e.target.value)}/></div>
         </div>}
-        {p.type==="bedrock"&&p.auth_mode==="api_key"&&<div><label className="text-xs font-medium text-gray-600 mb-1 block">Bedrock API Key</label><Input type="password" value={p.bedrock_api_key||""} onChange={(e:any)=>updateProvider(pi,"bedrock_api_key",e.target.value)}/></div>}
+        {p.type==="bedrock"&&p.auth_mode==="api_key"&&<div><label className="text-xs font-medium text-gray-600 mb-1 block">{t("settings.ai.bedrockApiKey")}</label><Input type="password" value={p.bedrock_api_key||""} onChange={(e:any)=>updateProvider(pi,"bedrock_api_key",e.target.value)}/></div>}
 
-        {/* 模型列表 */}
         <div className="border-t border-gray-100 pt-3">
           <div className="flex items-center justify-between mb-2">
-            <label className="text-xs font-semibold text-gray-700">模型列表</label>
-            <button onClick={()=>addModel(pi)} className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">+ 添加模型</button>
+            <label className="text-xs font-semibold text-gray-700">{t("settings.ai.modelList")}</label>
+            <button onClick={()=>addModel(pi)} className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">{t("settings.ai.addModel")}</button>
           </div>
-          {(p.models||[]).length===0&&<p className="text-xs text-gray-400 py-2">暂无模型，点击上方添加</p>}
+          {(p.models||[]).length===0&&<p className="text-xs text-gray-400 py-2">{t("settings.ai.noModels")}</p>}
           <div className="space-y-2">{(p.models||[]).map((m:any,mi:number)=>(
             <div key={m.id} className="bg-gray-50 rounded-lg px-3 py-2 space-y-2">
               <div className="grid grid-cols-12 gap-2 items-center">
                 <span className="text-xs text-gray-400 col-span-1 text-center">{mi+1}</span>
-                <div className="col-span-3"><Input value={m.name||""} onChange={(e:any)=>updateModel(pi,mi,"name",e.target.value)} placeholder="显示名称"/></div>
-                <div className="col-span-5"><Input value={p.type==="bedrock"?(m.model_id||""):(m.model||"")} onChange={(e:any)=>updateModel(pi,mi,p.type==="bedrock"?"model_id":"model",e.target.value)} placeholder={p.type==="bedrock"?"模型 ID（如 global.anthropic.claude-opus-4-6-v1）":"模型名称（如 gpt-4o）"} className="font-mono text-xs"/></div>
+                <div className="col-span-3"><Input value={m.name||""} onChange={(e:any)=>updateModel(pi,mi,"name",e.target.value)} placeholder={t("settings.ai.displayName")}/></div>
+                <div className="col-span-5"><Input value={p.type==="bedrock"?(m.model_id||""):(m.model||"")} onChange={(e:any)=>updateModel(pi,mi,p.type==="bedrock"?"model_id":"model",e.target.value)} placeholder={p.type==="bedrock"?t("settings.ai.modelId")+" (global.anthropic.claude-opus-4-6-v1)":t("settings.ai.modelName")+" (gpt-4o)"} className="font-mono text-xs"/></div>
                 <div className="col-span-3 flex items-center gap-1">
-                  <Btn size="sm" variant="outline" onClick={()=>testModel(pi,mi)} disabled={testingModel===m.id}>{testingModel===m.id?"...":"测试"}</Btn>
+                  <Btn size="sm" variant="outline" onClick={()=>testModel(pi,mi)} disabled={testingModel===m.id}>{testingModel===m.id?"...":t("settings.ai.test")}</Btn>
                   <button onClick={()=>removeModel(pi,mi)} className="text-red-400 hover:text-red-600 text-lg px-1">×</button>
                   {testResult?.mid===m.id&&<span className={`text-xs truncate ${testResult.success?"text-green-600":"text-red-500"}`}>{testResult.success?"✓ "+testResult.reply:"✗ "+(testResult.error||"").slice(0,30)}</span>}
                 </div>
@@ -166,44 +161,44 @@ function AiSettings() {
       </div>}
     </Card>)}
 
-    <div className="flex gap-3 pt-2"><Btn onClick={()=>saveAll()} disabled={saving}>{saving?"保存中...":"保存全部配置"}</Btn><span className="text-xs text-gray-400 self-center">{providers.length} 个 Provider，{providers.reduce((s:number,p:any)=>s+(p.models||[]).length,0)} 个模型</span></div>
+    <div className="flex gap-3 pt-2"><Btn onClick={()=>saveAll()} disabled={saving}>{saving?t("common.savingMsg"):t("settings.ai.saveAll")}</Btn><span className="text-xs text-gray-400 self-center">{t("settings.ai.providerCount",{count:providers.length,modelCount:providers.reduce((s:number,p:any)=>s+(p.models||[]).length,0)})}</span></div>
   </div>;
 }
 
 function ImageSettings() {
-  const {token,toast,loading,saving,f,setF,save}=useSettings();
+  const {token,toast,loading,saving,f,setF,save,t}=useSettings();
   const doSave=()=>{
     const p:any={image_storage_mode:f.image_storage_mode,image_s3_bucket:f.image_s3_bucket,image_s3_region:f.image_s3_region,image_s3_prefix:f.image_s3_prefix,image_s3_access_key:f.image_s3_access_key,image_base_url:f.image_base_url};
     if(f.image_s3_secret_key)p.image_s3_secret_key=f.image_s3_secret_key;
     save(p);
   };
-  if(loading) return <div className="flex items-center justify-center h-32 text-gray-400">加载中...</div>;
+  if(loading) return <div className="flex items-center justify-center h-32 text-gray-400">{t("common.loading")}</div>;
 
-  return <div className="max-w-3xl"><Card title="图片存储配置"><div className="space-y-5">
-    <div><label className="text-sm font-medium text-gray-700 mb-3 block">存储方式</label>
-      <div className="grid grid-cols-2 gap-3">{([{id:"local",label:"本地存储",desc:"图片保存在服务器本地 ./data/uploads/",color:"green"},{id:"s3",label:"AWS S3",desc:"上传到 S3 存储桶，支持 CDN 域名回显",color:"blue"}] as const).map(m=><button key={m.id} onClick={()=>setF({...f,image_storage_mode:m.id})} className={`p-3 rounded-xl border-2 text-left transition ${(f.image_storage_mode||"local")===m.id?`border-${m.color}-400 bg-${m.color}-50`:"border-gray-200 hover:border-gray-300"}`}><div className="flex items-center gap-2 mb-1"><span className={`w-3 h-3 rounded-full ${(f.image_storage_mode||"local")===m.id?`bg-${m.color}-500`:"bg-gray-300"}`}/><span className="text-sm font-semibold text-gray-800">{m.label}</span></div><p className="text-xs text-gray-500">{m.desc}</p></button>)}</div>
+  return <div className="max-w-3xl"><Card title={t("settings.image.title")}><div className="space-y-5">
+    <div><label className="text-sm font-medium text-gray-700 mb-3 block">{t("settings.image.storageMode")}</label>
+      <div className="grid grid-cols-2 gap-3">{([{id:"local",label:t("settings.image.local"),desc:t("settings.image.localDesc"),color:"green"},{id:"s3",label:t("settings.image.s3"),desc:t("settings.image.s3Desc"),color:"blue"}] as const).map(m=><button key={m.id} onClick={()=>setF({...f,image_storage_mode:m.id})} className={`p-3 rounded-xl border-2 text-left transition ${(f.image_storage_mode||"local")===m.id?`border-${m.color}-400 bg-${m.color}-50`:"border-gray-200 hover:border-gray-300"}`}><div className="flex items-center gap-2 mb-1"><span className={`w-3 h-3 rounded-full ${(f.image_storage_mode||"local")===m.id?`bg-${m.color}-500`:"bg-gray-300"}`}/><span className="text-sm font-semibold text-gray-800">{m.label}</span></div><p className="text-xs text-gray-500">{m.desc}</p></button>)}</div>
     </div>
     {f.image_storage_mode==="s3"&&<div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-3">
-      <h4 className="text-sm font-semibold text-blue-800">S3 存储桶配置</h4>
-      <div className="grid grid-cols-2 gap-3"><div><label className="text-xs font-medium text-gray-600 mb-1 block">Bucket 名称 *</label><Input placeholder="my-email-images" value={f.image_s3_bucket||""} onChange={(e:any)=>setF({...f,image_s3_bucket:e.target.value})}/></div><div><label className="text-xs font-medium text-gray-600 mb-1 block">区域</label><Select value={f.image_s3_region||""} onChange={(e:any)=>setF({...f,image_s3_region:e.target.value})}><option value="">使用环境默认</option>{REGIONS.map(r=><option key={r} value={r}>{r}</option>)}</Select></div><div><label className="text-xs font-medium text-gray-600 mb-1 block">Key 前缀</label><Input placeholder="ses-sender/images/" value={f.image_s3_prefix||""} onChange={(e:any)=>setF({...f,image_s3_prefix:e.target.value})}/></div></div>
-      <h4 className="text-sm font-semibold text-blue-800 pt-2">S3 凭证 <span className="text-gray-400 font-normal text-xs">（留空使用 IAM Role）</span></h4>
-      <div className="grid grid-cols-2 gap-3"><div><label className="text-xs font-medium text-gray-600 mb-1 block">Access Key ID</label><Input placeholder={f.image_has_s3_secret?"已配置":"AKIA..."} value={f.image_s3_access_key||""} onChange={(e:any)=>setF({...f,image_s3_access_key:e.target.value})}/></div><div><label className="text-xs font-medium text-gray-600 mb-1 block">Secret Access Key</label><Input type="password" placeholder={f.image_has_s3_secret?"已配置":"wJalr..."} value={f.image_s3_secret_key||""} onChange={(e:any)=>setF({...f,image_s3_secret_key:e.target.value})}/></div></div>
-      {f.image_has_s3_secret&&!f.image_s3_secret_key&&<button onClick={()=>{(async()=>{await fetch(`${API}/admin/settings`,{method:"PUT",headers:authH(token),body:JSON.stringify({image_s3_access_key:"__CLEAR__",image_s3_secret_key:"__CLEAR__"})});setF((p:any)=>({...p,image_s3_access_key:"",image_has_s3_secret:false}));toast("success","S3 凭证已清除");})();}} className="text-xs text-red-500 hover:text-red-700 underline">清除 S3 凭证</button>}
+      <h4 className="text-sm font-semibold text-blue-800">{t("settings.image.s3Config")}</h4>
+      <div className="grid grid-cols-2 gap-3"><div><label className="text-xs font-medium text-gray-600 mb-1 block">{t("settings.image.bucket")}</label><Input placeholder="my-email-images" value={f.image_s3_bucket||""} onChange={(e:any)=>setF({...f,image_s3_bucket:e.target.value})}/></div><div><label className="text-xs font-medium text-gray-600 mb-1 block">{t("settings.ai.region")}</label><Select value={f.image_s3_region||""} onChange={(e:any)=>setF({...f,image_s3_region:e.target.value})}><option value="">{t("settings.image.useEnvDefault")}</option>{REGIONS.map(r=><option key={r} value={r}>{r}</option>)}</Select></div><div><label className="text-xs font-medium text-gray-600 mb-1 block">{t("settings.image.keyPrefix")}</label><Input placeholder="ses-sender/images/" value={f.image_s3_prefix||""} onChange={(e:any)=>setF({...f,image_s3_prefix:e.target.value})}/></div></div>
+      <h4 className="text-sm font-semibold text-blue-800 pt-2">{t("settings.image.s3Credentials")} <span className="text-gray-400 font-normal text-xs">（{t("settings.image.s3CredentialsHint")}）</span></h4>
+      <div className="grid grid-cols-2 gap-3"><div><label className="text-xs font-medium text-gray-600 mb-1 block">Access Key ID</label><Input placeholder={f.image_has_s3_secret?t("settings.ai.configured"):"AKIA..."} value={f.image_s3_access_key||""} onChange={(e:any)=>setF({...f,image_s3_access_key:e.target.value})}/></div><div><label className="text-xs font-medium text-gray-600 mb-1 block">Secret Access Key</label><Input type="password" placeholder={f.image_has_s3_secret?t("settings.ai.configured"):"wJalr..."} value={f.image_s3_secret_key||""} onChange={(e:any)=>setF({...f,image_s3_secret_key:e.target.value})}/></div></div>
+      {f.image_has_s3_secret&&!f.image_s3_secret_key&&<button onClick={()=>{(async()=>{await fetch(`${API}/admin/settings`,{method:"PUT",headers:authH(token),body:JSON.stringify({image_s3_access_key:"__CLEAR__",image_s3_secret_key:"__CLEAR__"})});setF((p:any)=>({...p,image_s3_access_key:"",image_has_s3_secret:false}));toast("success",t("settings.image.s3CredCleared"));})();}} className="text-xs text-red-500 hover:text-red-700 underline">{t("settings.image.clearS3")}</button>}
     </div>}
-    <div className="border-t border-gray-100 pt-4"><label className="text-sm font-medium text-gray-700 mb-1.5 block">图片回显域名 <span className="text-gray-400 font-normal text-xs">（可选）</span></label><Input placeholder="https://cdn.example.com" value={f.image_base_url||""} onChange={(e:any)=>setF({...f,image_base_url:e.target.value})}/><p className="text-xs text-gray-400 mt-1">{f.image_storage_mode==="s3"?"配置 CDN 域名后，图片 URL 使用此域名拼接 S3 Key。":"配置域名后，本地图片 URL 使用此域名拼接。"}</p></div>
-    <div className="flex items-center gap-3 pt-2 border-t border-gray-100"><Btn onClick={doSave} disabled={saving}>{saving?"保存中...":"保存配置"}</Btn><Badge color={f.image_storage_mode==="s3"?"blue":"green"}>{f.image_storage_mode==="s3"?"S3 存储":"本地存储"}</Badge></div>
+    <div className="border-t border-gray-100 pt-4"><label className="text-sm font-medium text-gray-700 mb-1.5 block">{t("settings.image.baseUrl")} <span className="text-gray-400 font-normal text-xs">（{t("common.optional")}）</span></label><Input placeholder="https://cdn.example.com" value={f.image_base_url||""} onChange={(e:any)=>setF({...f,image_base_url:e.target.value})}/><p className="text-xs text-gray-400 mt-1">{f.image_storage_mode==="s3"?t("settings.image.baseUrlHint"):t("settings.image.baseUrlHintLocal")}</p></div>
+    <div className="flex items-center gap-3 pt-2 border-t border-gray-100"><Btn onClick={doSave} disabled={saving}>{saving?t("common.savingMsg"):t("settings.ai.saveConfig")}</Btn><Badge color={f.image_storage_mode==="s3"?"blue":"green"}>{f.image_storage_mode==="s3"?t("settings.image.s3Storage"):t("settings.image.localStorage")}</Badge></div>
   </div></Card></div>;
 }
 
 function UnsubSettings() {
-  const {token,toast,loading,saving,f,setF,save}=useSettings();
+  const {token,toast,loading,saving,f,setF,save,t}=useSettings();
   const [form,setForm]=useState({title:"",subtitle:"",success:"",logo:"",color:"",reasons:DEFAULT_REASONS});
   const [inited,setInited]=useState(false);
 
   if(!inited&&!loading&&f.unsub_page_title!==undefined){
     let reasons=DEFAULT_REASONS;
     if(f.unsub_page_reasons){try{reasons=JSON.parse(f.unsub_page_reasons);}catch{}}
-    setForm({title:f.unsub_page_title||"退订确认",subtitle:f.unsub_page_subtitle||"",success:f.unsub_page_success||"退订成功",logo:f.unsub_page_logo||"",color:f.unsub_page_color||"#667eea",reasons});
+    setForm({title:f.unsub_page_title||t("unsubPage.defaultTitle"),subtitle:f.unsub_page_subtitle||"",success:f.unsub_page_success||t("unsubPage.defaultSuccess"),logo:f.unsub_page_logo||"",color:f.unsub_page_color||"#667eea",reasons});
     setInited(true);
   }
 
@@ -211,13 +206,13 @@ function UnsubSettings() {
     save({unsub_page_title:form.title,unsub_page_subtitle:form.subtitle,unsub_page_success:form.success,unsub_page_logo:form.logo,unsub_page_color:form.color,unsub_page_reasons:JSON.stringify(form.reasons)});
   };
 
-  if(loading) return <div className="flex items-center justify-center h-32 text-gray-400">加载中...</div>;
+  if(loading) return <div className="flex items-center justify-center h-32 text-gray-400">{t("common.loading")}</div>;
 
-  return <UnsubPageEditor f={form} setF={setForm} onSave={doSave} saving={saving} title="退订页面默认配置" description={'设置退订页面的全局默认值。用户可在自己的「退订管理」中覆盖这些设置。'}/>;
+  return <UnsubPageEditor f={form} setF={setForm} onSave={doSave} saving={saving} title={t("settings.unsub.title")} description={t("settings.unsub.desc")}/>;
 }
 
 function SsoSettings() {
-  const {token,toast,loading,saving,f,setF,save}=useSettings();
+  const {token,toast,loading,saving,f,setF,save,t}=useSettings();
 
   const doSave=()=>save({
     sso_github_enabled:f.sso_github_enabled,sso_github_client_id:f.sso_github_client_id,
@@ -229,7 +224,7 @@ function SsoSettings() {
     sso_saml_sp_entity_id:f.sso_saml_sp_entity_id,
   });
 
-  if(loading) return <div className="flex items-center justify-center h-32 text-gray-400">加载中...</div>;
+  if(loading) return <div className="flex items-center justify-center h-32 text-gray-400">{t("common.loading")}</div>;
 
   const Toggle=({label,checked,onChange}:{label:string;checked:boolean;onChange:(v:boolean)=>void})=>(
     <label className="flex items-center gap-3 cursor-pointer">
@@ -241,43 +236,43 @@ function SsoSettings() {
   );
 
   return <div className="max-w-3xl space-y-6">
-    <Card title="GitHub OAuth2">
+    <Card title={t("settings.sso.github")}>
       <div className="space-y-4">
-        <Toggle label="启用 GitHub 登录" checked={f.sso_github_enabled==="true"} onChange={v=>setF({...f,sso_github_enabled:v?"true":"false"})}/>
+        <Toggle label={t("settings.sso.enableGithub")} checked={f.sso_github_enabled==="true"} onChange={v=>setF({...f,sso_github_enabled:v?"true":"false"})}/>
         {f.sso_github_enabled==="true"&&<div className="grid grid-cols-2 gap-4">
-          <div><label className="text-xs font-medium text-gray-600 mb-1 block">Client ID</label><Input value={f.sso_github_client_id||""} onChange={(e:any)=>setF({...f,sso_github_client_id:e.target.value})} placeholder="Iv1.xxx"/></div>
-          <div><label className="text-xs font-medium text-gray-600 mb-1 block">Client Secret</label><Input type="password" value={f.sso_github_client_secret||""} onChange={(e:any)=>setF({...f,sso_github_client_secret:e.target.value})} placeholder={f.sso_has_github_secret?"已配置":"xxx"}/></div>
+          <div><label className="text-xs font-medium text-gray-600 mb-1 block">{t("settings.sso.clientId")}</label><Input value={f.sso_github_client_id||""} onChange={(e:any)=>setF({...f,sso_github_client_id:e.target.value})} placeholder="Iv1.xxx"/></div>
+          <div><label className="text-xs font-medium text-gray-600 mb-1 block">{t("settings.sso.clientSecret")}</label><Input type="password" value={f.sso_github_client_secret||""} onChange={(e:any)=>setF({...f,sso_github_client_secret:e.target.value})} placeholder={f.sso_has_github_secret?t("settings.sso.configured"):"xxx"}/></div>
         </div>}
-        {f.sso_github_enabled==="true"&&<p className="text-xs text-gray-400">回调 URL 设置为: <code className="bg-gray-100 px-1 rounded">{typeof window!=="undefined"?window.location.origin:""}/api/sso/github/callback</code></p>}
+        {f.sso_github_enabled==="true"&&<p className="text-xs text-gray-400">{t("settings.sso.callbackUrl")} <code className="bg-gray-100 px-1 rounded">{typeof window!=="undefined"?window.location.origin:""}/api/sso/github/callback</code></p>}
       </div>
     </Card>
 
-    <Card title="Google OAuth2">
+    <Card title={t("settings.sso.google")}>
       <div className="space-y-4">
-        <Toggle label="启用 Google 登录" checked={f.sso_google_enabled==="true"} onChange={v=>setF({...f,sso_google_enabled:v?"true":"false"})}/>
+        <Toggle label={t("settings.sso.enableGoogle")} checked={f.sso_google_enabled==="true"} onChange={v=>setF({...f,sso_google_enabled:v?"true":"false"})}/>
         {f.sso_google_enabled==="true"&&<div className="grid grid-cols-2 gap-4">
-          <div><label className="text-xs font-medium text-gray-600 mb-1 block">Client ID</label><Input value={f.sso_google_client_id||""} onChange={(e:any)=>setF({...f,sso_google_client_id:e.target.value})} placeholder="xxx.apps.googleusercontent.com"/></div>
-          <div><label className="text-xs font-medium text-gray-600 mb-1 block">Client Secret</label><Input type="password" value={f.sso_google_client_secret||""} onChange={(e:any)=>setF({...f,sso_google_client_secret:e.target.value})} placeholder={f.sso_has_google_secret?"已配置":"GOCSPX-xxx"}/></div>
+          <div><label className="text-xs font-medium text-gray-600 mb-1 block">{t("settings.sso.clientId")}</label><Input value={f.sso_google_client_id||""} onChange={(e:any)=>setF({...f,sso_google_client_id:e.target.value})} placeholder="xxx.apps.googleusercontent.com"/></div>
+          <div><label className="text-xs font-medium text-gray-600 mb-1 block">{t("settings.sso.clientSecret")}</label><Input type="password" value={f.sso_google_client_secret||""} onChange={(e:any)=>setF({...f,sso_google_client_secret:e.target.value})} placeholder={f.sso_has_google_secret?t("settings.sso.configured"):"GOCSPX-xxx"}/></div>
         </div>}
-        {f.sso_google_enabled==="true"&&<p className="text-xs text-gray-400">授权重定向 URI: <code className="bg-gray-100 px-1 rounded">{typeof window!=="undefined"?window.location.origin:""}/api/sso/google/callback</code></p>}
+        {f.sso_google_enabled==="true"&&<p className="text-xs text-gray-400">{t("settings.sso.redirectUri")} <code className="bg-gray-100 px-1 rounded">{typeof window!=="undefined"?window.location.origin:""}/api/sso/google/callback</code></p>}
       </div>
     </Card>
 
-    <Card title="SAML SSO（企业内部系统）">
+    <Card title={t("settings.sso.saml")}>
       <div className="space-y-4">
-        <Toggle label="启用 SAML 登录" checked={f.sso_saml_enabled==="true"} onChange={v=>setF({...f,sso_saml_enabled:v?"true":"false"})}/>
+        <Toggle label={t("settings.sso.enableSaml")} checked={f.sso_saml_enabled==="true"} onChange={v=>setF({...f,sso_saml_enabled:v?"true":"false"})}/>
         {f.sso_saml_enabled==="true"&&<>
           <div className="grid grid-cols-2 gap-4">
-            <div><label className="text-xs font-medium text-gray-600 mb-1 block">IdP Entity ID</label><Input value={f.sso_saml_idp_entity_id||""} onChange={(e:any)=>setF({...f,sso_saml_idp_entity_id:e.target.value})} placeholder="https://idp.example.com/entity"/></div>
-            <div><label className="text-xs font-medium text-gray-600 mb-1 block">IdP SSO URL</label><Input value={f.sso_saml_idp_sso_url||""} onChange={(e:any)=>setF({...f,sso_saml_idp_sso_url:e.target.value})} placeholder="https://idp.example.com/sso"/></div>
+            <div><label className="text-xs font-medium text-gray-600 mb-1 block">{t("settings.sso.idpEntityId")}</label><Input value={f.sso_saml_idp_entity_id||""} onChange={(e:any)=>setF({...f,sso_saml_idp_entity_id:e.target.value})} placeholder="https://idp.example.com/entity"/></div>
+            <div><label className="text-xs font-medium text-gray-600 mb-1 block">{t("settings.sso.idpSsoUrl")}</label><Input value={f.sso_saml_idp_sso_url||""} onChange={(e:any)=>setF({...f,sso_saml_idp_sso_url:e.target.value})} placeholder="https://idp.example.com/sso"/></div>
           </div>
-          <div><label className="text-xs font-medium text-gray-600 mb-1 block">IdP 证书 (PEM)</label><textarea value={f.sso_saml_idp_cert||""} onChange={(e:any)=>setF({...f,sso_saml_idp_cert:e.target.value})} placeholder="-----BEGIN CERTIFICATE-----" className="w-full border border-gray-200 rounded-lg p-3 text-xs font-mono resize-none outline-none focus:border-indigo-400" rows={4}/></div>
-          <div><label className="text-xs font-medium text-gray-600 mb-1 block">SP Entity ID</label><Input value={f.sso_saml_sp_entity_id||""} onChange={(e:any)=>setF({...f,sso_saml_sp_entity_id:e.target.value})} placeholder="ses-sender"/></div>
-          <p className="text-xs text-gray-400">ACS URL: <code className="bg-gray-100 px-1 rounded">{typeof window!=="undefined"?window.location.origin:""}/api/sso/saml/callback</code></p>
+          <div><label className="text-xs font-medium text-gray-600 mb-1 block">{t("settings.sso.idpCert")}</label><textarea value={f.sso_saml_idp_cert||""} onChange={(e:any)=>setF({...f,sso_saml_idp_cert:e.target.value})} placeholder="-----BEGIN CERTIFICATE-----" className="w-full border border-gray-200 rounded-lg p-3 text-xs font-mono resize-none outline-none focus:border-indigo-400" rows={4}/></div>
+          <div><label className="text-xs font-medium text-gray-600 mb-1 block">{t("settings.sso.spEntityId")}</label><Input value={f.sso_saml_sp_entity_id||""} onChange={(e:any)=>setF({...f,sso_saml_sp_entity_id:e.target.value})} placeholder="ses-sender"/></div>
+          <p className="text-xs text-gray-400">{t("settings.sso.acsUrl")} <code className="bg-gray-100 px-1 rounded">{typeof window!=="undefined"?window.location.origin:""}/api/sso/saml/callback</code></p>
         </>}
       </div>
     </Card>
 
-    <div className="flex gap-3"><Btn onClick={doSave} disabled={saving}>{saving?"保存中...":"保存 SSO 配置"}</Btn></div>
+    <div className="flex gap-3"><Btn onClick={doSave} disabled={saving}>{saving?t("common.savingMsg"):t("settings.sso.save")}</Btn></div>
   </div>;
 }

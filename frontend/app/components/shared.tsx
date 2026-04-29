@@ -57,18 +57,26 @@ export const AuthProvider = AuthCtx.Provider;
 // ===== Sidebar =====
 export function Sidebar({menus,active,setActive,title="SES Sender"}:{menus:{id:string;icon:string;label:string}[];active:string;setActive:(id:string)=>void;title?:string}) {
   const {user,logout}=useAuth();
-  return <aside className="w-64 flex-shrink-0 flex flex-col overflow-y-auto" style={{background:"#1C2434"}}>
+  let t:(k:string)=>string = (k)=>k;
+  let locale="zh", setLocale:(l:any)=>void = ()=>{};
+  try { const i18n = require("../i18n"); t=i18n.useT(); const lc=i18n.useLocale(); locale=lc.locale; setLocale=lc.setLocale; } catch {}
+  return <aside className="w-64 flex-shrink-0 flex flex-col h-screen sticky top-0 overflow-y-auto" style={{background:"#1C2434"}}>
     <div className="h-16 flex items-center px-6 gap-3 flex-shrink-0"><div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center"><span className="text-white font-bold text-sm">S</span></div><span className="text-white text-lg font-bold">{title}</span></div>
-    <div className="px-5 mt-4 mb-2"><p className="text-xs font-semibold uppercase tracking-wider" style={{color:"#8A99AF"}}>菜单</p></div>
+    <div className="px-5 mt-4 mb-2"><p className="text-xs font-semibold uppercase tracking-wider" style={{color:"#8A99AF"}}>{t("sidebar.menu")}</p></div>
     <nav className="flex-1">{menus.map(m=><div key={m.id} onClick={()=>setActive(m.id)} className={`sidebar-link ${active===m.id?"active":""}`}><span className="text-lg">{m.icon}</span><span>{m.label}</span></div>)}</nav>
     <div className="p-5 border-t" style={{borderColor:"#333A48"}}>
       <div className="flex items-center gap-3"><div className="w-9 h-9 rounded-full bg-indigo-600 flex items-center justify-center"><span className="text-white text-sm font-bold">{(user.display_name||user.username)[0]?.toUpperCase()}</span></div>
-        <div className="flex-1 min-w-0"><p className="text-sm font-medium text-white truncate">{user.display_name||user.username}</p><p className="text-xs truncate" style={{color:"#8A99AF"}}>{user.email||"管理员"}</p></div>
+        <div className="flex-1 min-w-0"><p className="text-sm font-medium text-white truncate">{user.display_name||user.username}</p><p className="text-xs truncate" style={{color:"#8A99AF"}}>{user.email||t("sidebar.admin")}</p></div>
       </div>
-      <button onClick={logout} className="mt-3 w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm transition hover:bg-red-500/20 text-red-400 hover:text-red-300 border border-red-500/20 hover:border-red-500/40">
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
-        退出登录
-      </button>
+      <div className="flex items-center gap-2 mt-3">
+        <button onClick={()=>setLocale(locale==="zh"?"en":"zh")} className="flex-shrink-0 px-2 py-1.5 rounded-lg text-xs font-medium transition border" style={{borderColor:"#333A48",color:"#8A99AF"}} title="Switch language">
+          {locale==="zh"?"EN":"中"}
+        </button>
+        <button onClick={logout} className="flex-1 flex items-center justify-center gap-2 px-3 py-1.5 rounded-lg text-sm transition hover:bg-red-500/20 text-red-400 hover:text-red-300 border border-red-500/20 hover:border-red-500/40">
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
+          {t("sidebar.logout")}
+        </button>
+      </div>
     </div>
   </aside>;
 }
@@ -99,13 +107,15 @@ export function Btn({variant="primary",size="md",className="",...props}:any) {
 
 export function Pager({page,totalPages,total,onPageChange}:{page:number;totalPages:number;total:number;onPageChange:(p:number)=>void}) {
   if(total===0) return null;
+  let t:(k:string,p?:any)=>string;
+  try { t = require("../i18n").useT(); } catch { t = (k:string)=>k; }
   const pages:number[]=[]; for(let i=Math.max(1,page-2);i<=Math.min(totalPages,page+2);i++) pages.push(i);
   return <div className="flex items-center justify-between pt-4 border-t border-gray-100 mt-4">
-    <span className="text-xs text-gray-400">共 {total} 条 · 第 {page}/{totalPages} 页</span>
+    <span className="text-xs text-gray-400">{t("common.pageInfo",{total:String(total),page:String(page),totalPages:String(totalPages)})}</span>
     {totalPages>1&&<div className="flex gap-1">
-      <Btn key="prev" variant="outline" size="sm" disabled={page<=1} onClick={()=>onPageChange(page-1)}>上一页</Btn>
+      <Btn key="prev" variant="outline" size="sm" disabled={page<=1} onClick={()=>onPageChange(page-1)}>{t("common.prevPage")}</Btn>
       {pages.map(p=><Btn key={p} variant={p===page?"primary":"outline"} size="sm" onClick={()=>onPageChange(p)}>{p}</Btn>)}
-      <Btn key="next" variant="outline" size="sm" disabled={page>=totalPages} onClick={()=>onPageChange(page+1)}>下一页</Btn>
+      <Btn key="next" variant="outline" size="sm" disabled={page>=totalPages} onClick={()=>onPageChange(page+1)}>{t("common.nextPage")}</Btn>
     </div>}
   </div>;
 }

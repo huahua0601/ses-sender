@@ -407,9 +407,15 @@ def send_bulk_email(
         finally:
             bg_db.close()
 
-    # 启动后台线程
-    thread = threading.Thread(target=_do_send, daemon=True)
-    thread.start()
+    # 如果 Sender Engine 已启动，只写 DB，由 Engine 的 Scanner 自动拾取
+    # 否则使用旧的后台线程模式
+    from core.sender import get_engine
+    engine = get_engine()
+    if engine and engine.running:
+        logger.info(f"[Send] batch={batch_id} 已入队，等待 Sender Engine 处理")
+    else:
+        thread = threading.Thread(target=_do_send, daemon=True)
+        thread.start()
 
     return {
         "status": "queued",
