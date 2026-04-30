@@ -55,6 +55,10 @@ const ACTIONS = {
   unsubscribes:       { method: "GET",  path: "/unsubscribe-list" },
   group_create:       { method: "POST", path: "/groups" },
   group_delete:       { method: "DELETE",path:"/groups/{group_id}" },
+  users_list:         { method: "GET",  path: "/admin/users" },
+  user_create:        { method: "POST", path: "/admin/users" },
+  user_update:        { method: "PUT",  path: "/admin/users/{user_id}" },
+  users_quotas:       { method: "GET",  path: "/admin/users/quotas" },
 };
 
 function registerTools(server) {

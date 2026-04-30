@@ -107,6 +107,17 @@ ses(action="send", params={"template_id": 3, "group_id": 5})
 |--------|--------|------|
 | `unsubscribes` | `{"search":"gmail","page":1}` | 查看退订列表 |
 
+### 用户管理（需管理员登录）
+
+| action | params | 说明 |
+|--------|--------|------|
+| `users_list` | `{}` | 查看所有用户 |
+| `user_create` | `{"username":"test","display_name":"测试","password":"123456","email":"test@example.com"}` | 创建用户 |
+| `user_update` | `{"user_id":2,"display_name":"新名称","email":"new@example.com","daily_send_limit":2000}` | 更新用户信息 |
+| `user_update` | `{"user_id":2,"is_active":false}` | 禁用用户 |
+| `user_update` | `{"user_id":2,"password":"newpass"}` | 重置密码 |
+| `users_quotas` | `{}` | 查看所有用户当日发送量 |
+
 ## 直接 HTTP API 调用方式（无 MCP 时）
 
 如果 MCP 不可用，可通过 curl/fetch 直接调用：

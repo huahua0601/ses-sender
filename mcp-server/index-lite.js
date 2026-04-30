@@ -48,6 +48,11 @@ const ACTIONS = {
   scheduled_toggle:   { method: "PUT",  path: "/scheduled-jobs/{job_id}", desc: "暂停/恢复任务" },
   scheduled_delete:   { method: "DELETE",path:"/scheduled-jobs/{job_id}", desc: "删除任务" },
   unsubscribes:       { method: "GET",  path: "/unsubscribe-list",    desc: "退订列表" },
+  // 用户管理（需管理员权限）
+  users_list:         { method: "GET",  path: "/admin/users",          desc: "用户列表" },
+  user_create:        { method: "POST", path: "/admin/users",          desc: "创建用户" },
+  user_update:        { method: "PUT",  path: "/admin/users/{user_id}",desc: "更新用户" },
+  users_quotas:       { method: "GET",  path: "/admin/users/quotas",   desc: "用户配额使用" },
 };
 
 const server = new McpServer({ name: "ses-sender", version: "2.0.0" });
