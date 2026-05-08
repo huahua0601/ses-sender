@@ -4,6 +4,27 @@ import React, { useState, useEffect, useRef, createContext, useContext, useCallb
 export const API = process.env.NEXT_PUBLIC_API_URL || "/api";
 export const authH = (t: string) => ({ Authorization: `Bearer ${t}`, "Content-Type": "application/json" });
 
+// 全局 401 处理：token 失效时自动跳转登录
+export function handle401(response: Response) {
+  if (response.status === 401) {
+    localStorage.removeItem("ses_token");
+    localStorage.removeItem("ses_user");
+    window.location.href = "/";
+  }
+  return response;
+}
+
+export async function authFetch(url: string, token: string, options: RequestInit = {}) {
+  const res = await fetch(url, { ...options, headers: { ...authH(token), ...(options.headers || {}) } });
+  if (res.status === 401) {
+    localStorage.removeItem("ses_token");
+    localStorage.removeItem("ses_user");
+    window.location.href = "/";
+    throw new Error("Session expired");
+  }
+  return res;
+}
+
 // ===== Toast =====
 type TT = "success"|"error"|"info"|"warning";
 const ToastCtx = createContext<{toast:(t:TT,title:string,msg?:string)=>void}>({toast:()=>{}});

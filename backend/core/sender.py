@@ -307,7 +307,7 @@ class SenderEngine:
                     else:
                         job.status = "success"
                     db.commit()
-                    logger.info(f"[Scanner] 修复卡住的任务 {job.batch_id} → {job.status}")
+                    logger.info(f"[Scanner] 任务完成 {job.batch_id} → {job.status}")
 
             jobs = db.query(SendingJob).filter(SendingJob.status == "queued").limit(5).all()
             for job in jobs:
@@ -376,7 +376,7 @@ class SenderEngine:
                         db.commit()
                         return
 
-                logger.info(f"[Scanner] batch={job.batch_id} 已入队 {len(details)} 封")
+                logger.info(f"[Scanner] batch={job.batch_id} 已入队 {len(details)} 封, template={job.template_name}, group={job.group_name}, config_set={SES_CONFIGURATION_SET or '(无)'}")
         finally:
             db.close()
 
