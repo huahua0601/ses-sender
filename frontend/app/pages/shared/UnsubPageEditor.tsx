@@ -23,7 +23,7 @@ const DEFAULT_REASONS = [
 
 export { DEFAULT_REASONS, makeDefaultReasons };
 
-type UnsubForm = {title:string;subtitle:string;success:string;logo:string;color:string;reasons:{value:string;label:string}[]};
+type UnsubForm = {title:string;subtitle:string;success:string;logo:string;color:string;buttonText:string;reasons:{value:string;label:string}[]};
 
 export default function UnsubPageEditor({f,setF,onSave,saving,senderEmail,title,description}:{
   f:UnsubForm;setF:(f:UnsubForm)=>void;onSave:()=>void;saving:boolean;senderEmail?:string;title?:string;description?:string;
@@ -48,7 +48,7 @@ ${logo}<h1>${f.title||t("unsubPage.defaultTitle")}</h1>
 <p class="sub">${f.subtitle||t("unsubPage.defaultSubtitle")}</p>
 <div class="info">${t("unsub.unsubEmailLabel")}<strong>user@example.com</strong><br>${t("unsub.senderLabel")}<strong>${senderEmail||"sender@example.com"}</strong></div>
 <h3>${t("unsub.reasonOptional")}</h3>${reasons}
-<button class="btn">${t("unsub.confirmUnsub")}</button>
+<button class="btn">${f.buttonText||t("unsub.confirmUnsub")||"确认退订"}</button>
 </div></body></html>`;
   };
 
@@ -63,10 +63,13 @@ ${logo}<h1>${f.title||t("unsubPage.defaultTitle")}</h1>
           </div>
           <div><label className="text-xs font-medium text-gray-700 mb-1 block">{t("unsub.pageSubtitle")}</label><Input value={f.subtitle} onChange={(e:any)=>setF({...f,subtitle:e.target.value})} placeholder={t("unsubPage.defaultSubtitle")}/></div>
           <div className="grid grid-cols-2 gap-3">
+            <div><label className="text-xs font-medium text-gray-700 mb-1 block">按钮文字</label><Input value={f.buttonText||""} onChange={(e:any)=>setF({...f,buttonText:e.target.value})} placeholder="确认退订"/></div>
+            <div><label className="text-xs font-medium text-gray-700 mb-1 block">{t("unsub.logoUrl")}</label><Input value={f.logo} onChange={(e:any)=>setF({...f,logo:e.target.value})} placeholder="https://..."/></div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
             <div><label className="text-xs font-medium text-gray-700 mb-1 block">{t("unsub.brandColor")}</label>
               <div className="flex gap-2 items-center"><input type="color" value={f.color||"#667eea"} onChange={(e:any)=>setF({...f,color:e.target.value})} className="w-9 h-9 rounded-lg border border-gray-200 cursor-pointer"/><Input value={f.color} onChange={(e:any)=>setF({...f,color:e.target.value})} placeholder="#667eea" className="flex-1"/></div>
             </div>
-            <div><label className="text-xs font-medium text-gray-700 mb-1 block">{t("unsub.logoUrl")}</label><Input value={f.logo} onChange={(e:any)=>setF({...f,logo:e.target.value})} placeholder="https://..."/></div>
           </div>
           <div>
             <div className="flex items-center justify-between mb-2"><label className="text-xs font-medium text-gray-700">{t("unsub.reasons")}</label><button onClick={addReason} className="text-xs text-indigo-600 hover:text-indigo-800">{t("unsub.addReason")}</button></div>

@@ -29,6 +29,7 @@ SETTING_KEYS = [
     "unsub_page_success",    # 成功提示文案
     "unsub_page_logo",       # Logo 图片 URL
     "unsub_page_color",      # 品牌主色
+    "unsub_page_button_text", # 确认退订按钮文字
     # SSO 配置
     "sso_github_enabled",
     "sso_github_client_id",
@@ -157,6 +158,7 @@ def get_unsub_page_config(db: Session, source_email: str = None) -> dict:
         "success": val("success", "unsub_page_success", "退订成功"),
         "logo": val("logo", "unsub_page_logo", ""),
         "color": val("color", "unsub_page_color", "#667eea"),
+        "buttonText": val("buttonText", "unsub_page_button_text", "确认退订"),
     }
 
 

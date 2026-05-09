@@ -11,7 +11,8 @@ class User(Base):
     username = Column(String(100), unique=True, index=True)
     display_name = Column(String(255))
     hashed_password = Column(String(255))
-    email = Column(String(255))
+    email = Column(String(255))  # 发件邮箱
+    contact_email = Column(String(255), nullable=True)  # 收件邮箱（默认同发件邮箱）
     is_admin = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True)
     daily_send_limit = Column(Integer, default=1000)

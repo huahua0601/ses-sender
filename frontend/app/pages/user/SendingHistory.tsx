@@ -4,18 +4,22 @@ import { API, authH, useAuth, Card, Badge, Btn, Pager, Modal } from "../../compo
 import { useT } from "../../i18n";
 
 export default function SendingHistory() {
-  const {token}=useAuth();
+  const {token,user}=useAuth();
   const t = useT();
   const [jobs,setJobs]=useState<any[]>([]); const [page,setPage]=useState(1); const [total,setTotal]=useState(0); const [totalPages,setTotalPages]=useState(1);
   const [showMetrics,setShowMetrics]=useState(false);
   const [metricsJob,setMetricsJob]=useState<any>(null);
   const [metrics,setMetrics]=useState<any>(null);
   const [metricsLoading,setMetricsLoading]=useState(false);
+  const [contactEmail,setContactEmail]=useState("");
 
   const load=async(p=page)=>{
     try{const d=await(await fetch(`${API}/sending-jobs?page=${p}&page_size=10`,{headers:authH(token)})).json();setJobs(d.items||[]);setTotal(d.total||0);setTotalPages(d.total_pages||1);setPage(d.page||1);}catch{setJobs([]);}
   };
-  useEffect(()=>{load(1);},[]);
+  useEffect(()=>{
+    load(1);
+    fetch(`${API}/auth/me`,{headers:authH(token)}).then(r=>r.json()).then(d=>{setContactEmail(d.contact_email||d.email||"");}).catch(()=>{});
+  },[]);
 
   const openMetrics=async(job:any)=>{
     setMetricsJob(job);setMetrics(null);setShowMetrics(true);setMetricsLoading(true);
@@ -76,7 +80,7 @@ export default function SendingHistory() {
 
     <Card title={t("history.title")} extra={<Btn variant="outline" size="sm" onClick={()=>load(1)}>{t("common.refresh")}</Btn>}>
       <div className="overflow-x-auto"><table className="w-full">
-        <thead><tr className="border-b border-gray-100">{[t("history.batchId"),t("history.template"),t("history.group"),t("history.sendEmail"),t("history.contactCount"),t("history.status"),t("history.sendTime"),t("history.actions")].map(h=><th key={h} className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider py-3 px-3 whitespace-nowrap">{h}</th>)}</tr></thead>
+        <thead><tr className="border-b border-gray-100">{[t("history.batchId"),t("history.template"),t("history.group"),t("history.sendEmail"),"收件邮箱",t("history.contactCount"),t("history.status"),t("history.sendTime"),t("history.actions")].map(h=><th key={h} className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider py-3 px-3 whitespace-nowrap">{h}</th>)}</tr></thead>
         <tbody>{jobs.map((j:any)=>{
           const isSending=j.status==="queued"||j.status==="sending";
           const prog=j.total_contacts>0?Math.round((j.sent_count||0)/j.total_contacts*100):0;
@@ -85,6 +89,7 @@ export default function SendingHistory() {
           <td className="py-3 px-3 text-sm text-gray-800">{j.template_name}</td>
           <td className="py-3 px-3 text-sm text-gray-800">{j.group_name}</td>
           <td className="py-3 px-3 text-sm text-gray-500">{j.source_email}</td>
+          <td className="py-3 px-3 text-sm text-gray-500">{j.reply_to||j.source_email}</td>
           <td className="py-3 px-3 text-sm text-gray-600 text-center">{isSending?<span>{j.sent_count||0}/{j.total_contacts}</span>:j.total_contacts}</td>
           <td className="py-3 px-3">
             <div className="flex flex-col gap-1">

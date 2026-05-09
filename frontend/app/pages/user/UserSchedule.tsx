@@ -127,14 +127,19 @@ export default function UserSchedule() {
     if(r.ok){toast("success",t("schedule.deleted"));load();}
   };
 
-  const fmtTime=(iso:string|null)=>iso?new Date(iso).toLocaleString():"-";
+  const fmtTime=(iso:string|null)=>{
+    if(!iso) return "-";
+    const d = new Date(iso.endsWith("Z")?iso:iso+"Z");
+    return d.toLocaleString(undefined,{hour12:false,timeZoneName:"short"});
+  };
   const descSchedule=(j:any)=>{
     const hh=String(j.cron_hour).padStart(2,"0");
     const mm=String(j.cron_minute).padStart(2,"0");
+    const tz=" (UTC)";
     if(j.schedule_type==="once") return fmtTime(j.scheduled_time);
-    if(j.schedule_type==="daily") return t("schedule.descDaily",{time:`${hh}:${mm}`});
-    if(j.schedule_type==="weekly") return t("schedule.descWeekly",{day:DAYS[j.day_of_week||0],time:`${hh}:${mm}`});
-    if(j.schedule_type==="monthly") return t("schedule.descMonthly",{day:j.day_of_month||1,time:`${hh}:${mm}`});
+    if(j.schedule_type==="daily") return `${t("schedule.typeDaily")} ${hh}:${mm}${tz}`;
+    if(j.schedule_type==="weekly") return `${t("schedule.typeWeekly")}${DAYS[j.day_of_week||0]} ${hh}:${mm}${tz}`;
+    if(j.schedule_type==="monthly") return `${t("schedule.typeMonthly")} ${j.day_of_month||1}${t("schedule.day")||"日"} ${hh}:${mm}${tz}`;
     return "-";
   };
 

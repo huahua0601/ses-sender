@@ -21,6 +21,7 @@ class SendingJobOut(BaseModel):
     template_name: str
     group_name: str
     source_email: str
+    reply_to: Optional[str] = None
     total_contacts: int
     sent_count: int = 0
     total_batches: int

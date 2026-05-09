@@ -34,9 +34,10 @@ class SendTask:
     recipient: str
     name: str
     source_email: str
-    subject_tpl: str
-    html_tpl: str
-    text_tpl: str
+    reply_to: str = ""
+    subject_tpl: str = ""
+    html_tpl: str = ""
+    text_tpl: str = ""
     attributes: dict = field(default_factory=dict)
     config_set: str = ""
     tags: dict = field(default_factory=dict)
@@ -183,6 +184,7 @@ class SenderEngine:
             email_params = {
                 "FromEmailAddress": task.source_email,
                 "Destination": {"ToAddresses": [task.recipient]},
+                "ReplyToAddresses": [task.reply_to or task.source_email],
                 "Content": {
                     "Simple": {
                         "Subject": {"Data": subject, "Charset": "UTF-8"},
@@ -329,6 +331,10 @@ class SenderEngine:
                 subject_tpl = tpl.subject if tpl else job.template_name
                 html_tpl = tpl.html_body if tpl else ""
 
+                from domain.auth.models import User as UserModel
+                job_user = db.query(UserModel).filter(UserModel.id == job.user_id).first()
+                reply_to = (job_user.contact_email if job_user and job_user.contact_email else job.source_email) or job.source_email
+
                 def _ascii_tag(val):
                     return "".join(c if ord(c) < 128 and c not in ' "\'\\' else "_" for c in str(val))[:256] or "unknown"
 
@@ -355,6 +361,7 @@ class SenderEngine:
                         recipient=detail.recipient,
                         name=contact.name if contact else "Customer",
                         source_email=job.source_email,
+                        reply_to=reply_to,
                         subject_tpl=subject_tpl,
                         html_tpl=html_tpl,
                         text_tpl="",

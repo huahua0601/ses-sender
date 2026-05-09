@@ -139,7 +139,7 @@ h3{{font-size:14px;color:#374151;margin-bottom:12px}}
       {reasons_html}
     </div>
     <input id="other-text" class="other-input" placeholder="请输入其他原因..." maxlength="200">
-    <button class="btn btn-primary" id="confirm-btn" onclick="doUnsubscribe()">确认退订</button>
+    <button class="btn btn-primary" id="confirm-btn" onclick="doUnsubscribe()">{cfg.get("buttonText","确认退订")}</button>
     <button class="btn btn-secondary" onclick="window.close()">取消</button>
   </div>
   <div class="success" id="success-view">
@@ -170,7 +170,7 @@ async function doUnsubscribe(){{
     await fetch(window.location.pathname,{{method:'POST',body:fd}});
     document.getElementById('form-view').style.display='none';
     document.getElementById('success-view').style.display='block';
-  }}catch{{btn.disabled=false;btn.textContent='确认退订';alert('操作失败，请重试');}}
+  }}catch{{btn.disabled=false;btn.textContent='{cfg.get("buttonText","确认退订")}';alert('操作失败，请重试');}}
 }}
 </script>
 </div></body></html>"""

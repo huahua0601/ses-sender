@@ -86,3 +86,14 @@ def get_unsub_defaults(current_user: User = Depends(get_current_user), db: Sessi
     """获取管理员设置的退订页面默认值"""
     from domain.settings.service import get_unsub_page_config
     return get_unsub_page_config(db)
+
+
+@router.put("/user/contact-email")
+def update_contact_email(data: dict, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """用户自己修改收件邮箱"""
+    contact_email = data.get("contact_email", "").strip()
+    if not contact_email:
+        raise HTTPException(status_code=400, detail="收件邮箱不能为空")
+    current_user.contact_email = contact_email
+    db.commit()
+    return {"message": "收件邮箱已更新"}

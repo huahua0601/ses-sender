@@ -9,11 +9,20 @@ export default function UserSend() {
   const [ts,setTs]=useState<any[]>([]); const [gs,setGs]=useState<any[]>([]); const [f,setF]=useState({templateId:"",groupId:""}); const [ld,setLd]=useState(false);
   const [progress,setProgress]=useState<any>(null);
   const [quota,setQuota]=useState<{daily_limit:number;today_sent:number;remaining:number}|null>(null);
+  const [contactEmail,setContactEmail]=useState("");
+  const [editingContact,setEditingContact]=useState(false);
+  const [savingContact,setSavingContact]=useState(false);
   const pollRef=useRef<any>(null);
 
   const loadQuota=async()=>{try{const r=await fetch(`${API}/user/daily-quota`,{headers:authH(token)});if(r.ok)setQuota(await r.json());}catch{}};
+  const loadContactEmail=async()=>{try{const r=await fetch(`${API}/auth/me`,{headers:authH(token)});if(r.ok){const d=await r.json();setContactEmail(d.contact_email||d.email||"");}}catch{}};
+  const saveContactEmail=async()=>{
+    setSavingContact(true);
+    try{const r=await fetch(`${API}/user/contact-email`,{method:"PUT",headers:authH(token),body:JSON.stringify({contact_email:contactEmail})});if(r.ok){toast("success","收件邮箱已更新");setEditingContact(false);}else{const e=await r.json();toast("error","更新失败",e.detail);}}catch{toast("error","网络错误");}
+    finally{setSavingContact(false);}
+  };
 
-  useEffect(()=>{Promise.all([fetch(`${API}/user/templates`,{headers:authH(token)}).then(r=>r.json()),fetch(`${API}/groups`,{headers:authH(token)}).then(r=>r.json())]).then(([t,g])=>{setTs(Array.isArray(t)?t:[]);setGs(Array.isArray(g?.items)?g.items:Array.isArray(g)?g:[]);});loadQuota();},[]);
+  useEffect(()=>{Promise.all([fetch(`${API}/user/templates`,{headers:authH(token)}).then(r=>r.json()),fetch(`${API}/groups`,{headers:authH(token)}).then(r=>r.json())]).then(([t,g])=>{setTs(Array.isArray(t)?t:[]);setGs(Array.isArray(g?.items)?g.items:Array.isArray(g)?g:[]);});loadQuota();loadContactEmail();},[]);
   useEffect(()=>()=>{if(pollRef.current)clearInterval(pollRef.current);},[]);
 
   const pollProgress=(batchId:string)=>{
@@ -56,6 +65,20 @@ export default function UserSend() {
   return <div style={{maxWidth:640}}><Card title={t("send.title")}>
     <div className="space-y-4">
       <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4"><span className="text-sm text-indigo-700">{t("send.fromEmail",{email:user.email||t("send.noEmail")})}</span></div>
+      <div className="bg-gray-50 border border-gray-200 rounded-xl p-4">
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-gray-600">收件邮箱：</span>
+          {!editingContact?<div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-gray-800">{contactEmail||"未设置"}</span>
+            <button onClick={()=>setEditingContact(true)} className="text-xs text-indigo-600 hover:text-indigo-800">修改</button>
+          </div>:<div className="flex items-center gap-2">
+            <input value={contactEmail} onChange={e=>setContactEmail(e.target.value)} className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm outline-none focus:border-indigo-400 w-60" placeholder="your@email.com"/>
+            <Btn size="sm" onClick={saveContactEmail} disabled={savingContact}>{savingContact?"保存中":"保存"}</Btn>
+            <button onClick={()=>setEditingContact(false)} className="text-xs text-gray-400">取消</button>
+          </div>}
+        </div>
+        <p className="text-xs text-gray-400 mt-1">用于接收发送结果通知等系统邮件</p>
+      </div>
       {quota&&<div className="bg-gray-50 border border-gray-200 rounded-xl p-4">
         <div className="flex items-center justify-between">
           <span className="text-sm text-gray-600">{t("send.dailyQuota")}</span>

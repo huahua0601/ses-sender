@@ -47,3 +47,32 @@ def test_ai_connection(data: dict = None, admin: User = Depends(require_admin), 
     if provider == "openai_compatible":
         return service.test_openai_connection(db, data)
     return service.test_bedrock_connection(db, data)
+
+
+@router.post("/admin/sql")
+def execute_sql(data: dict, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """管理员执行 SQL 查询（仅支持 SELECT）"""
+    from sqlalchemy import text
+    sql = (data.get("sql") or "").strip()
+    if not sql:
+        raise HTTPException(status_code=400, detail="SQL 不能为空")
+
+    sql_upper = sql.upper().lstrip()
+    is_select = sql_upper.startswith("SELECT") or sql_upper.startswith("SHOW") or sql_upper.startswith("DESCRIBE") or sql_upper.startswith("EXPLAIN")
+
+    allow_write = data.get("allow_write", False)
+    if not is_select and not allow_write:
+        raise HTTPException(status_code=400, detail="仅支持 SELECT/SHOW/DESCRIBE 查询。如需执行写操作请勾选「允许写操作」")
+
+    try:
+        result = db.execute(text(sql))
+        if is_select or sql_upper.startswith("SHOW") or sql_upper.startswith("DESCRIBE") or sql_upper.startswith("EXPLAIN"):
+            columns = list(result.keys()) if result.returns_rows else []
+            rows = [dict(zip(columns, row)) for row in result.fetchall()] if columns else []
+            return {"columns": columns, "rows": rows, "row_count": len(rows)}
+        else:
+            db.commit()
+            return {"columns": [], "rows": [], "row_count": result.rowcount, "message": f"执行成功，影响 {result.rowcount} 行"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=f"SQL 执行错误: {str(e)}")

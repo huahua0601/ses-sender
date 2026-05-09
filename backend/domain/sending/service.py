@@ -215,12 +215,18 @@ def send_bulk_email(
     tpl_text = tpl.text_body if tpl else ""
 
     # 创建发送任务（状态：排队中）
+    # 获取用户的收件邮箱作为 reply_to
+    from domain.auth.models import User as UserModel
+    _user = db.query(UserModel).filter(UserModel.id == user_id).first()
+    reply_to_email = (_user.contact_email if _user and _user.contact_email else source_email) or source_email
+
     job = SendingJob(
         user_id=user_id,
         batch_id=batch_id,
         template_name=tpl_name,
         group_name=group_name,
         source_email=source_email,
+        reply_to=reply_to_email,
         total_contacts=len(contact_list),
         sent_count=0,
         total_batches=0,
@@ -543,6 +549,7 @@ def list_sending_jobs(db: Session, user_id: int, page: int = 1, page_size: int =
     items = [SendingJobOut(
         id=r.id, batch_id=r.batch_id, template_name=r.template_name,
         group_name=r.group_name, source_email=r.source_email,
+        reply_to=r.reply_to,
         total_contacts=r.total_contacts, sent_count=r.sent_count or 0,
         total_batches=r.total_batches,
         status=r.status, error_message=r.error_message,

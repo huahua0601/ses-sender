@@ -92,7 +92,7 @@ function UnsubConfig() {
   const t = useT();
   const {token,user}=useAuth(); const {toast}=useToast();
   const [loading,setLoading]=useState(true);const [saving,setSaving]=useState(false);
-  const [f,setF]=useState({title:"",subtitle:"",success:"",logo:"",color:"",reasons:DEFAULT_REASONS});
+  const [f,setF]=useState({title:"",subtitle:"",success:"",logo:"",color:"",buttonText:"",reasons:DEFAULT_REASONS});
   const [useCustom,setUseCustom]=useState(false);
 
   useEffect(()=>{
@@ -100,8 +100,8 @@ function UnsubConfig() {
       try{
         const [userR,defaultR]=await Promise.all([fetch(`${API}/user/unsub-config`,{headers:authH(token)}),fetch(`${API}/user/unsub-defaults`,{headers:authH(token)})]);
         const defaults=defaultR.ok?await defaultR.json():{};
-        const base={title:defaults.title||t("unsubPage.defaultTitle"),subtitle:defaults.subtitle||t("unsubPage.defaultSubtitle"),success:defaults.success||t("unsubPage.defaultSuccess"),logo:defaults.logo||"",color:defaults.color||"#667eea",reasons:defaults.reasons||DEFAULT_REASONS};
-        if(userR.ok){const d=await userR.json();if(d&&Object.keys(d).length>0){setF({title:d.title||base.title,subtitle:d.subtitle||base.subtitle,success:d.success||base.success,logo:d.logo||base.logo,color:d.color||base.color,reasons:d.reasons||base.reasons});setUseCustom(true);}else setF(base);}else setF(base);
+        const base={title:defaults.title||t("unsubPage.defaultTitle"),subtitle:defaults.subtitle||t("unsubPage.defaultSubtitle"),success:defaults.success||t("unsubPage.defaultSuccess"),logo:defaults.logo||"",color:defaults.color||"#667eea",buttonText:defaults.buttonText||"",reasons:defaults.reasons||DEFAULT_REASONS};
+        if(userR.ok){const d=await userR.json();if(d&&Object.keys(d).length>0){setF({title:d.title||base.title,subtitle:d.subtitle||base.subtitle,success:d.success||base.success,logo:d.logo||base.logo,color:d.color||base.color,buttonText:d.buttonText||base.buttonText||"",reasons:d.reasons||base.reasons});setUseCustom(true);}else setF(base);}else setF(base);
       }catch{}finally{setLoading(false);}
     })();
   },[]);
