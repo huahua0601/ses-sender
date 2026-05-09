@@ -68,6 +68,7 @@ const en: Record<string, string> = {
   "menu.identities": "Identities",
   "menu.test": "Test Email",
   "menu.settings": "Settings",
+  "menu.logs": "Logs",
 
   // ==================== Dashboard ====================
   "dashboard.todaySent": "Today",

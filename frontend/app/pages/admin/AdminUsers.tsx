@@ -16,6 +16,9 @@ export default function AdminUsers() {
   const [editName,setEditName]=useState("");
   const [newPwd,setNewPwd]=useState("");
   const [editLimit,setEditLimit]=useState(1000);
+  const [search,setSearch]=useState("");
+  const [sortCol,setSortCol]=useState<string>("");
+  const [sortDir,setSortDir]=useState<"asc"|"desc">("asc");
 
   const load=async()=>{
     const [u,q]=await Promise.all([
@@ -26,6 +29,35 @@ export default function AdminUsers() {
     setQuotas(q||{});
   };
   useEffect(()=>{load();},[]);
+
+  const handleSort=(col:string)=>{
+    if(sortCol===col) setSortDir(d=>d==="asc"?"desc":"asc");
+    else { setSortCol(col); setSortDir("asc"); }
+  };
+
+  const filteredUsers=users.filter(u=>{
+    if(!search.trim()) return true;
+    const s=search.toLowerCase();
+    return (u.username||"").toLowerCase().includes(s)
+      ||(u.display_name||"").toLowerCase().includes(s)
+      ||(u.email||"").toLowerCase().includes(s)
+      ||(u.contact_email||"").toLowerCase().includes(s);
+  });
+
+  const sortedUsers=[...filteredUsers].sort((a,b)=>{
+    if(!sortCol) return 0;
+    let va:any, vb:any;
+    if(sortCol==="username"){va=a.username||"";vb=b.username||"";}
+    else if(sortCol==="display_name"){va=a.display_name||"";vb=b.display_name||"";}
+    else if(sortCol==="email"){va=a.email||"";vb=b.email||"";}
+    else if(sortCol==="contact_email"){va=a.contact_email||a.email||"";vb=b.contact_email||b.email||"";}
+    else if(sortCol==="daily_send_limit"){va=a.daily_send_limit||0;vb=b.daily_send_limit||0;}
+    else if(sortCol==="role"){va=a.is_admin?1:0;vb=b.is_admin?1:0;}
+    else if(sortCol==="status"){va=a.is_active?1:0;vb=b.is_active?1:0;}
+    else return 0;
+    if(typeof va==="string") { const cmp=va.localeCompare(vb); return sortDir==="asc"?cmp:-cmp; }
+    return sortDir==="asc"?va-vb:vb-va;
+  });
   const create=async()=>{if(!f.username||!f.password||!f.email)return toast("warning",t("admin.users.fillComplete"));const r=await fetch(`${API}/admin/users`,{method:"POST",headers:authH(token),body:JSON.stringify(f)});if(r.ok){toast("success",t("admin.users.created"));setShowCreate(false);load();}else{const e=await r.json();toast("error",t("common.failed"),e.detail);}};
   const {confirm:cfm}=useConfirm();
   const toggle=async(u:any)=>{const action=u.is_active?t("admin.users.disable"):t("admin.users.enable");if(!await cfm(action,t("admin.users.enableConfirm",{action,name:u.username})))return;await fetch(`${API}/admin/users/${u.id}`,{method:"PUT",headers:authH(token),body:JSON.stringify({is_active:!u.is_active})});load();};
@@ -67,10 +99,13 @@ export default function AdminUsers() {
       </div>
     </Modal>
 
-    <Card title={t("admin.users.title")} extra={<Btn size="sm" onClick={()=>{setF({username:"",display_name:"",password:"",email:"",contact_email:"",is_admin:false,daily_send_limit:1000});setShowCreate(true);}}>{t("admin.users.add")}</Btn>}>
+    <Card title={t("admin.users.title")} extra={<div className="flex items-center gap-3"><Input placeholder="🔍 Search..." value={search} onChange={(e:any)=>setSearch(e.target.value)} className="w-56"/><Btn size="sm" className="whitespace-nowrap" onClick={()=>{setF({username:"",display_name:"",password:"",email:"",contact_email:"",is_admin:false,daily_send_limit:1000});setShowCreate(true);}}>{t("admin.users.add")}</Btn></div>}>
       <div className="overflow-x-auto"><table className="w-full">
-        <thead><tr className="border-b border-gray-100">{[t("admin.users.username.label"),t("admin.users.displayName.label"),t("admin.users.sendEmail.label"),"收件邮箱",t("admin.users.dailyLimit.label"),t("admin.users.role.label"),t("admin.users.status.label"),t("admin.users.actions.label")].map(h=><th key={h} className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider py-3 px-4">{h}</th>)}</tr></thead>
-        <tbody>{users.map((u:any)=><tr key={u.id} className="border-b border-gray-50 hover:bg-gray-50/50 transition">
+        <thead><tr className="border-b border-gray-100">
+          {([["username",t("admin.users.username.label")],["display_name",t("admin.users.displayName.label")],["email",t("admin.users.sendEmail.label")],["contact_email","收件邮箱"],["daily_send_limit",t("admin.users.dailyLimit.label")],["role",t("admin.users.role.label")],["status",t("admin.users.status.label")]] as [string,string][]).map(([col,label])=><th key={col} className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider py-3 px-4 cursor-pointer select-none hover:text-gray-700 transition" onClick={()=>handleSort(col)}>{label}{sortCol===col?<span className="ml-1">{sortDir==="asc"?"↑":"↓"}</span>:""}</th>)}
+          <th className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider py-3 px-4">{t("admin.users.actions.label")}</th>
+        </tr></thead>
+        <tbody>{sortedUsers.map((u:any)=><tr key={u.id} className="border-b border-gray-50 hover:bg-gray-50/50 transition">
           <td className="py-3 px-4 text-sm font-medium text-gray-800">{u.username}</td>
           <td className="py-3 px-4 text-sm text-gray-600">{u.display_name}</td>
           <td className="py-3 px-4 text-sm text-gray-500">{u.email||"-"}</td>

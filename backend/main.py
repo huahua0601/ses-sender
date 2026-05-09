@@ -79,10 +79,21 @@ finally:
 
 # --- FastAPI App ---
 # --- 配置日志 ---
+LOG_DIR = os.path.join(os.path.dirname(__file__), "logs")
+os.makedirs(LOG_DIR, exist_ok=True)
+LOG_FILE = os.path.join(LOG_DIR, "app.log")
+
+from logging.handlers import RotatingFileHandler
+
+_log_format = "%(asctime)s [%(name)s] %(levelname)s: %(message)s"
+_file_handler = RotatingFileHandler(LOG_FILE, maxBytes=10*1024*1024, backupCount=5, encoding="utf-8")
+_file_handler.setLevel(logging.DEBUG)
+_file_handler.setFormatter(logging.Formatter(_log_format))
+
 logging.basicConfig(
     level=logging.DEBUG,
-    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],
+    format=_log_format,
+    handlers=[logging.StreamHandler(sys.stdout), _file_handler],
 )
 # 降低第三方库的日志级别，避免过多噪音
 logging.getLogger("botocore").setLevel(logging.WARNING)

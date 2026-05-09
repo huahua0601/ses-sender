@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from core.database import get_db
 from core.deps import require_admin, get_current_user
@@ -76,3 +77,40 @@ def execute_sql(data: dict, admin: User = Depends(require_admin), db: Session = 
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=400, detail=f"SQL 执行错误: {str(e)}")
+
+
+import os
+from collections import deque
+
+_LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "logs")
+
+
+def _read_log_lines(lines: int = 200) -> list[str]:
+    log_file = os.path.join(_LOG_DIR, "app.log")
+    if not os.path.exists(log_file):
+        return []
+    with open(log_file, "r", encoding="utf-8", errors="replace") as f:
+        return list(deque(f, maxlen=lines))
+
+
+@router.get("/admin/logs")
+def get_logs(lines: int = Query(200, ge=10, le=10000), admin: User = Depends(require_admin)):
+    content = _read_log_lines(lines)
+    return {"lines": content, "total": len(content)}
+
+
+@router.get("/admin/logs/download")
+def download_logs(lines: int = Query(5000, ge=100, le=50000), admin: User = Depends(require_admin)):
+    content = _read_log_lines(lines)
+
+    def generate():
+        for line in content:
+            yield line
+
+    from datetime import datetime
+    filename = f"ses-sender-logs-{datetime.now().strftime('%Y%m%d-%H%M%S')}.log"
+    return StreamingResponse(
+        generate(),
+        media_type="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

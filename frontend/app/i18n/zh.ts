@@ -68,6 +68,7 @@ const zh: Record<string, string> = {
   "menu.identities": "发送实体",
   "menu.test": "测试邮件",
   "menu.settings": "系统设置",
+  "menu.logs": "系统日志",
 
   // ==================== 数据概览 ====================
   "dashboard.todaySent": "今日发送",
