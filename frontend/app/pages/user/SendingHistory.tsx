@@ -6,6 +6,7 @@ import { useT } from "../../i18n";
 export default function SendingHistory() {
   const {token,user}=useAuth();
   const t = useT();
+  const fmtTime=(v:string|null)=>{if(!v) return "-";const s=v.includes("T")&&!v.endsWith("Z")&&!v.includes("+")&&!v.includes("-",11)?v+"Z":v;return new Date(s).toLocaleString(undefined,{hour12:false});};
   const [jobs,setJobs]=useState<any[]>([]); const [page,setPage]=useState(1); const [total,setTotal]=useState(0); const [totalPages,setTotalPages]=useState(1);
   const [showMetrics,setShowMetrics]=useState(false);
   const [metricsJob,setMetricsJob]=useState<any>(null);
@@ -53,7 +54,7 @@ export default function SendingHistory() {
           <div><span className="text-gray-400">{t("history.template")}:{" "}</span><span className="text-gray-800">{metricsJob?.template_name}</span></div>
           <div><span className="text-gray-400">{t("history.group")}:{" "}</span><span className="text-gray-800">{metricsJob?.group_name}</span></div>
           <div><span className="text-gray-400">{t("history.sendEmail")}:{" "}</span><span className="text-gray-800">{metricsJob?.source_email}</span></div>
-          <div><span className="text-gray-400">{t("history.sendTime")}:{" "}</span><span className="text-gray-800">{metricsJob?.created_at?new Date(metricsJob.created_at).toLocaleString():"-"}</span></div>
+          <div><span className="text-gray-400">{t("history.sendTime")}:{" "}</span><span className="text-gray-800">{fmtTime(metricsJob?.created_at)}</span></div>
         </div>
 
         {metrics?<div className="space-y-5">
@@ -97,7 +98,7 @@ export default function SendingHistory() {
               {isSending&&<div className="w-24"><div className="h-1.5 bg-gray-200 rounded-full overflow-hidden"><div className="h-full bg-indigo-500 rounded-full transition-all duration-500" style={{width:`${prog}%`}}/></div><span className="text-[10px] text-gray-400">{prog}%</span></div>}
             </div>
           </td>
-          <td className="py-3 px-3 text-xs text-gray-400 whitespace-nowrap">{j.created_at?new Date(j.created_at).toLocaleString():"-"}</td>
+          <td className="py-3 px-3 text-xs text-gray-400 whitespace-nowrap">{fmtTime(j.created_at)}</td>
           <td className="py-3 px-3"><Btn variant="primary" size="sm" onClick={()=>openMetrics(j)} disabled={isSending}>{t("history.viewMetrics")}</Btn></td>
         </tr>})}</tbody>
       </table></div>

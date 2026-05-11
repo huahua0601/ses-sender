@@ -6,6 +6,7 @@ import { useT } from "../../i18n";
 export default function UserDashboard() {
   const {token}=useAuth();
   const t = useT();
+  const fmtTime=(v:string|null)=>{if(!v) return "-";const s=v.includes("T")&&!v.endsWith("Z")&&!v.includes("+")&&!v.includes("-",11)?v+"Z":v;return new Date(s).toLocaleString(undefined,{hour12:false});};
   const [data,setData]=useState<any>(null);
   const [loading,setLoading]=useState(true);
 
@@ -117,7 +118,7 @@ export default function UserDashboard() {
           <td className="py-2.5 px-3 text-sm text-gray-500">{j.group_name}</td>
           <td className="py-2.5 px-3 text-sm font-medium text-gray-700">{j.total_contacts}</td>
           <td className="py-2.5 px-3"><span className="inline-block text-xs font-medium px-2 py-0.5 rounded-full" style={{color:stColor[j.status]||"#6B7280",background:`${stColor[j.status]||"#6B7280"}15`}}>{stText[j.status]||j.status}</span></td>
-          <td className="py-2.5 px-3 text-xs text-gray-400">{j.created_at?new Date(j.created_at).toLocaleString():"-"}</td>
+          <td className="py-2.5 px-3 text-xs text-gray-400">{fmtTime(j.created_at)}</td>
         </tr>)}</tbody>
       </table></div>}
     </Card>

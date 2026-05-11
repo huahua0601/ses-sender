@@ -50,7 +50,11 @@ function UnsubList() {
     if(!await cfm(t("unsub.batchRestore"),t("unsub.batchRestoreConfirm",{count:selected.size}),t("common.confirm")))return;
     try{const r=await fetch(`${API}/unsubscribe-list/batch-delete`,{method:"POST",headers:authH(token),body:JSON.stringify({ids:[...selected]})});const d=await r.json();if(r.ok){toast("success",d.message);load(page);}else toast("error",t("common.failed"),d.detail);}catch{toast("error",t("common.networkError"));}
   };
-  const fmtTime=(t:string|null)=>t?new Date(t).toLocaleString():"—";
+  const fmtTime=(t:string|null)=>{
+    if(!t) return "—";
+    const s = t.includes("T")&&!t.endsWith("Z")&&!t.includes("+")&&!t.includes("-",11) ? t+"Z" : t;
+    return new Date(s).toLocaleString(undefined,{hour12:false});
+  };
   const reasonLabel=(r:string)=>{const m:{[k:string]:string}={"one-click":t("unsub.reasonOneClick"),"manual":t("unsub.reasonManual"),"complaint":t("unsub.reasonComplaint"),"web-unsubscribe":t("unsub.reasonWeb"),"too_frequent":t("unsub.reasonFrequent"),"not_relevant":t("unsub.reasonIrrelevant"),"never_subscribed":t("unsub.reasonNeverSub"),"prefer_other":t("unsub.reasonOther")};if(m[r])return m[r];if(r?.startsWith("other:"))return t("unsub.otherPrefix",{text:r.slice(6)});return r||"—";};
 
   return <Card title={t("unsub.listTitle")} extra={<Btn variant="secondary" size="sm" onClick={()=>load(page)}>{t("common.refresh")}</Btn>}>

@@ -51,7 +51,11 @@ export default function EmailDetails() {
     if(s==="Sent")return <Badge color="blue">{t("details.deliverySent")}</Badge>;
     return <Badge color="orange">{s}</Badge>;
   };
-  const fmtTime=(t:string|null)=>t?new Date(t).toLocaleString():"—";
+  const fmtTime=(t:string|null)=>{
+    if(!t) return "—";
+    const s = t.includes("T")&&!t.endsWith("Z")&&!t.includes("+")&&!t.includes("-",11) ? t+"Z" : t;
+    return new Date(s).toLocaleString(undefined,{hour12:false});
+  };
 
   const doExport=()=>{
     const params=new URLSearchParams();

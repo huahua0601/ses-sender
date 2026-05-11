@@ -56,7 +56,11 @@ export default function UnsubscribeList() {
     }catch{toast("error","网络错误");}
   };
 
-  const fmtTime=(t:string|null)=>t?new Date(t).toLocaleString():"—";
+  const fmtTime=(t:string|null)=>{
+    if(!t) return "—";
+    const s = t.includes("T")&&!t.endsWith("Z")&&!t.includes("+")&&!t.includes("-",11) ? t+"Z" : t;
+    return new Date(s).toLocaleString(undefined,{hour12:false});
+  };
   const reasonLabel=(r:string)=>{
     const map:{[k:string]:string}={"one-click":"一键退订","manual":"手动退订","complaint":"投诉退订",
       "web-unsubscribe":"网页退订","too_frequent":"邮件太频繁","not_relevant":"内容不相关",

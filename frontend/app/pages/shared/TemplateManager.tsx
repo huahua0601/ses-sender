@@ -264,7 +264,7 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
         <tbody>{list.map((tpl:any)=><tr key={tpl.id} className="border-b border-gray-50 hover:bg-gray-50/50 transition">
           <td className="py-3 px-4 text-sm font-medium text-gray-800">{tpl.name}</td>
           <td className="py-3 px-4 text-sm text-gray-500">{tpl.subject}</td>
-          <td className="py-3 px-4 text-sm text-gray-400">{tpl.created_at?new Date(tpl.created_at).toLocaleString():"-"}</td>
+          <td className="py-3 px-4 text-sm text-gray-400">{(()=>{const v=tpl.created_at;if(!v) return "-";const s=v.includes("T")&&!v.endsWith("Z")&&!v.includes("+")&&!v.includes("-",11)?v+"Z":v;return new Date(s).toLocaleString(undefined,{hour12:false});})()}</td>
           <td className="py-3 px-4 flex gap-1"><Btn variant="primary" size="sm" onClick={()=>openEdit(tpl)}>{t("common.edit")}</Btn><Btn variant="danger" size="sm" onClick={()=>del(tpl)}>{t("common.delete")}</Btn></td>
         </tr>)}</tbody>
       </table></div>

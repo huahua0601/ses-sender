@@ -5,6 +5,7 @@ import { useT } from "../../i18n";
 
 export default function AdminStats() {
   const {token}=useAuth(); const t=useT();
+  const fmtTime=(v:string|null)=>{if(!v) return "-";const s=v.includes("T")&&!v.endsWith("Z")&&!v.includes("+")&&!v.includes("-",11)?v+"Z":v;return new Date(s).toLocaleString(undefined,{hour12:false});};
   const [stats,setStats]=useState<any>(null);
   const [jobs,setJobs]=useState<any[]>([]); const [page,setPage]=useState(1); const [total,setTotal]=useState(0); const [totalPages,setTotalPages]=useState(1);
 
@@ -39,8 +40,8 @@ export default function AdminStats() {
           <td className="py-3 px-3 text-sm text-center font-medium" style={{color:"#3C50E0"}}>{u.total_contacts}</td>
           <td className="py-3 px-3 text-center"><Badge color="green">{u.success_count}</Badge></td>
           <td className="py-3 px-3 text-center">{u.failed_count>0?<Badge color="red">{u.failed_count}</Badge>:<span className="text-gray-300">0</span>}</td>
-          <td className="py-3 px-3 text-xs text-gray-400 whitespace-nowrap">{u.first_send?new Date(u.first_send).toLocaleString():"-"}</td>
-          <td className="py-3 px-3 text-xs text-gray-400 whitespace-nowrap">{u.last_send?new Date(u.last_send).toLocaleString():"-"}</td>
+          <td className="py-3 px-3 text-xs text-gray-400 whitespace-nowrap">{fmtTime(u.first_send)}</td>
+          <td className="py-3 px-3 text-xs text-gray-400 whitespace-nowrap">{fmtTime(u.last_send)}</td>
         </tr>)}</tbody>
       </table></div>
       {(!stats?.users||stats.users.length===0)&&<p className="text-center py-8 text-sm text-gray-400">{t("admin.stats.noSendData")}</p>}
@@ -57,7 +58,7 @@ export default function AdminStats() {
           <td className="py-3 px-3 text-sm text-gray-500">{j.source_email}</td>
           <td className="py-3 px-3 text-sm text-gray-800 text-center">{j.total_contacts}</td>
           <td className="py-3 px-3">{j.status==="success"?<Badge color="green">{t("admin.stats.statusSuccess")}</Badge>:j.status==="partial"?<Badge color="orange">{t("admin.stats.statusPartial")}</Badge>:j.status==="queued"?<Badge color="gray">{t("admin.stats.statusQueued")}</Badge>:j.status==="sending"?<Badge color="blue">{t("admin.stats.statusSending")}</Badge>:<Badge color="red">{t("admin.stats.statusFailed")}</Badge>}</td>
-          <td className="py-3 px-3 text-xs text-gray-400 whitespace-nowrap">{j.created_at?new Date(j.created_at).toLocaleString():"-"}</td>
+          <td className="py-3 px-3 text-xs text-gray-400 whitespace-nowrap">{fmtTime(j.created_at)}</td>
         </tr>)}</tbody>
       </table></div>
       {jobs.length===0&&<p className="text-center py-8 text-sm text-gray-400">{t("admin.stats.noSendRecords")}</p>}
