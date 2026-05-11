@@ -674,6 +674,10 @@ def process_ses_event(event_data: dict, db: Session):
         logger.debug(f"[Webhook] 未找到 message_id={message_id} 的记录，跳过")
         return
 
+    # 收到 SES 事件说明邮件已发出，修正可能卡住的 send_status
+    if detail.send_status == "Pending":
+        detail.send_status = "Success"
+
     from datetime import datetime
 
     event_type_upper = event_type.upper()

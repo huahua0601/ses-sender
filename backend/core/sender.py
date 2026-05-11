@@ -289,16 +289,33 @@ class SenderEngine:
             # 修复卡住的 sending 任务（所有 detail 已处理完但状态未更新）
             stuck = db.query(SendingJob).filter(SendingJob.status == "sending").all()
             for job in stuck:
+                # send_status 仍为 Pending 但 delivery_status 已有值的，说明实际已发出
+                stale_pending = db.query(SendingJobDetail).filter(
+                    SendingJobDetail.batch_id == job.batch_id,
+                    SendingJobDetail.send_status == "Pending",
+                    SendingJobDetail.delivery_status != None,
+                ).all()
+                for d in stale_pending:
+                    d.send_status = "Success"
+                if stale_pending:
+                    db.commit()
+
+                # 真正未处理的：send_status=Pending 且无 delivery_status
                 pending = db.query(SendingJobDetail).filter(
                     SendingJobDetail.batch_id == job.batch_id,
                     SendingJobDetail.send_status == "Pending",
+                    SendingJobDetail.delivery_status == None,
                 ).count()
+
                 if pending == 0:
                     failed = db.query(SendingJobDetail).filter(
                         SendingJobDetail.batch_id == job.batch_id,
                         SendingJobDetail.send_status == "Failed",
                     ).count()
-                    total = db.query(SendingJobDetail).filter(SendingJobDetail.batch_id == job.batch_id).count()
+                    total = db.query(SendingJobDetail).filter(
+                        SendingJobDetail.batch_id == job.batch_id,
+                        SendingJobDetail.send_status != "Unsubscribed",
+                    ).count()
                     job.sent_count = total
                     job.finished_at = datetime.utcnow()
                     if failed == total:
