@@ -1,6 +1,7 @@
 import io
 import json
 import math
+import re
 from typing import List
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -33,7 +34,21 @@ def list_groups(db: Session, user_id: int, search: str = "", page: int = 1, page
     return PaginatedResponse(items=items, total=total, page=page, page_size=page_size, total_pages=total_pages)
 
 
+_INVALID_NAME_CHARS = re.compile(r'[/\\<>\"\'`|]')
+
+
+def _validate_group_name(name: str):
+    m = _INVALID_NAME_CHARS.search(name)
+    if m:
+        raise HTTPException(
+            status_code=400,
+            detail=f"客群名称不能包含特殊字符「{m.group()}」，请使用字母、数字、中文、空格、下划线、连字符等"
+        )
+
+
 def create_group(db: Session, data: GroupCreate, user_id: int) -> ContactGroup:
+    if data.name:
+        _validate_group_name(data.name)
     group = ContactGroup(name=data.name, description=data.description, user_id=user_id)
     db.add(group)
     db.commit()
@@ -44,6 +59,7 @@ def create_group(db: Session, data: GroupCreate, user_id: int) -> ContactGroup:
 def update_group(db: Session, group_id: int, data: GroupUpdate, user_id: int) -> ContactGroup:
     group = _get_user_group(db, group_id, user_id)
     if data.name is not None:
+        _validate_group_name(data.name)
         group.name = data.name
     if data.description is not None:
         group.description = data.description

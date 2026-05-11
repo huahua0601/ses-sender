@@ -370,8 +370,6 @@ class SenderEngine:
                         tags={
                             "batch_id": job.batch_id,
                             "user_id": str(job.user_id),
-                            "template_name": _ascii_tag(job.template_name),
-                            "group_name": _ascii_tag(job.group_name),
                         },
                         unsub_url=unsub_url,
                     )
