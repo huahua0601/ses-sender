@@ -15,16 +15,15 @@ def _generate_ses_name(user_id: int) -> str:
     return f"u{user_id}_{short_id}"
 
 
-_INVALID_NAME_CHARS = re.compile(r'[/\\<>\"\'`|]')
+_VALID_NAME_PATTERN = re.compile(r'^[\w\s\-\.@]+$', re.UNICODE)
 
 
 def _validate_name(name: str, field_label: str = "名称"):
-    """校验名称不含 SES tag 不支持的特殊字符"""
-    m = _INVALID_NAME_CHARS.search(name)
-    if m:
+    """校验名称只包含字母、数字、中文、空格、下划线、连字符、点、@"""
+    if not _VALID_NAME_PATTERN.match(name):
         raise HTTPException(
             status_code=400,
-            detail=f"{field_label}不能包含特殊字符「{m.group()}」，请使用字母、数字、中文、空格、下划线、连字符等"
+            detail=f"{field_label}只能包含字母、数字、中文、空格及 _ - . @ 符号"
         )
 
 
