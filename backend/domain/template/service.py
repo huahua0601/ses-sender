@@ -1,5 +1,4 @@
 import uuid
-import re
 from typing import List
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
@@ -15,18 +14,6 @@ def _generate_ses_name(user_id: int) -> str:
     return f"u{user_id}_{short_id}"
 
 
-_VALID_NAME_PATTERN = re.compile(r'^[\w\s\-\.@]+$', re.UNICODE)
-
-
-def _validate_name(name: str, field_label: str = "名称"):
-    """校验名称只包含字母、数字、中文、空格、下划线、连字符、点、@"""
-    if not _VALID_NAME_PATTERN.match(name):
-        raise HTTPException(
-            status_code=400,
-            detail=f"{field_label}只能包含字母、数字、中文、空格及 _ - . @ 符号"
-        )
-
-
 def list_templates(db: Session, user_id: int) -> List[TemplateOut]:
     """列出用户的模版"""
     rows = db.query(EmailTemplate).filter(EmailTemplate.user_id == user_id).order_by(EmailTemplate.id.desc()).all()
@@ -37,7 +24,6 @@ def create_template(db: Session, data: TemplateCreate, user_id: int) -> dict:
     """创建模版（同时写入 DB 和 SES v2）"""
     if not data.name or not data.name.strip():
         raise HTTPException(status_code=400, detail="模版名称不能为空")
-    _validate_name(data.name, "模版名称")
 
     ses_name = _generate_ses_name(user_id)
     html = str(data.html_body or "")

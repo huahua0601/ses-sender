@@ -1,7 +1,6 @@
 import io
 import json
 import math
-import re
 from typing import List
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -34,20 +33,7 @@ def list_groups(db: Session, user_id: int, search: str = "", page: int = 1, page
     return PaginatedResponse(items=items, total=total, page=page, page_size=page_size, total_pages=total_pages)
 
 
-_VALID_NAME_PATTERN = re.compile(r'^[\w\s\-\.@]+$', re.UNICODE)
-
-
-def _validate_group_name(name: str):
-    if not _VALID_NAME_PATTERN.match(name):
-        raise HTTPException(
-            status_code=400,
-            detail="客群名称只能包含字母、数字、中文、空格及 _ - . @ 符号"
-        )
-
-
 def create_group(db: Session, data: GroupCreate, user_id: int) -> ContactGroup:
-    if data.name:
-        _validate_group_name(data.name)
     group = ContactGroup(name=data.name, description=data.description, user_id=user_id)
     db.add(group)
     db.commit()
@@ -58,7 +44,6 @@ def create_group(db: Session, data: GroupCreate, user_id: int) -> ContactGroup:
 def update_group(db: Session, group_id: int, data: GroupUpdate, user_id: int) -> ContactGroup:
     group = _get_user_group(db, group_id, user_id)
     if data.name is not None:
-        _validate_group_name(data.name)
         group.name = data.name
     if data.description is not None:
         group.description = data.description
