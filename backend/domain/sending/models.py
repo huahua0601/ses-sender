@@ -60,6 +60,17 @@ class UnsubscribeRecord(Base):
     unsubscribed_at = Column(DateTime, default=datetime.utcnow)
 
 
+class EmailBlacklist(Base):
+    """全局邮箱黑名单"""
+    __tablename__ = "email_blacklist"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String(255), unique=True, index=True)
+    reason = Column(String(500), default="")
+    created_by = Column(String(100), default="admin")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class ScheduledJob(Base):
     """定时/周期发送任务"""
     __tablename__ = "scheduled_jobs"

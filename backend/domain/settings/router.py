@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from core.database import get_db
@@ -114,3 +114,121 @@ def download_logs(lines: int = Query(5000, ge=100, le=50000), admin: User = Depe
         media_type="text/plain",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ========================
+# 邮箱黑名单管理
+# ========================
+
+@router.get("/admin/blacklist")
+def list_blacklist(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=200),
+    search: str = Query(""),
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    from domain.sending.models import EmailBlacklist
+    import math
+
+    query = db.query(EmailBlacklist)
+    if search:
+        query = query.filter(EmailBlacklist.email.contains(search))
+    total = query.count()
+    rows = query.order_by(EmailBlacklist.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    return {
+        "items": [{"id": r.id, "email": r.email, "reason": r.reason, "created_by": r.created_by, "created_at": r.created_at.isoformat() if r.created_at else None} for r in rows],
+        "total": total,
+        "page": page,
+        "total_pages": math.ceil(total / page_size) if total else 1,
+    }
+
+
+@router.post("/admin/blacklist")
+def add_blacklist(data: dict, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    from domain.sending.models import EmailBlacklist
+    from core import blacklist as cache
+
+    email = (data.get("email") or "").strip().lower()
+    if not email:
+        raise HTTPException(status_code=400, detail="邮箱不能为空")
+
+    existing = db.query(EmailBlacklist).filter(EmailBlacklist.email == email).first()
+    if existing:
+        raise HTTPException(status_code=400, detail=f"{email} 已在黑名单中")
+
+    record = EmailBlacklist(email=email, reason=data.get("reason", ""), created_by=admin.username)
+    db.add(record)
+    db.commit()
+    cache.add(email)
+    return {"message": f"已添加 {email} 到黑名单"}
+
+
+@router.delete("/admin/blacklist/{item_id}")
+def remove_blacklist(item_id: int, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    from domain.sending.models import EmailBlacklist
+    from core import blacklist as cache
+
+    record = db.query(EmailBlacklist).filter(EmailBlacklist.id == item_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="记录不存在")
+    email = record.email
+    db.delete(record)
+    db.commit()
+    cache.remove(email)
+    return {"message": f"已从黑名单移除 {email}"}
+
+
+@router.post("/admin/blacklist/batch-delete")
+def batch_delete_blacklist(data: dict, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    from domain.sending.models import EmailBlacklist
+    from core import blacklist as cache
+
+    ids = data.get("ids", [])
+    if not ids:
+        raise HTTPException(status_code=400, detail="未选择记录")
+
+    records = db.query(EmailBlacklist).filter(EmailBlacklist.id.in_(ids)).all()
+    for r in records:
+        cache.remove(r.email)
+        db.delete(r)
+    db.commit()
+    return {"message": f"已删除 {len(records)} 条记录"}
+
+
+@router.post("/admin/blacklist/upload")
+async def upload_blacklist(file: UploadFile = File(...), admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    from domain.sending.models import EmailBlacklist
+    from core import blacklist as cache
+
+    contents = await file.read()
+    text = contents.decode("utf-8", errors="ignore")
+
+    emails = set()
+    for line in text.splitlines():
+        line = line.strip().strip(",").strip(";").lower()
+        if "@" in line and "." in line:
+            parts = line.split(",")
+            for p in parts:
+                p = p.strip()
+                if "@" in p and "." in p and len(p) < 255:
+                    emails.add(p)
+
+    if not emails:
+        raise HTTPException(status_code=400, detail="未识别到有效邮箱地址")
+
+    existing = set(r[0] for r in db.query(EmailBlacklist.email).filter(EmailBlacklist.email.in_(emails)).all())
+    new_emails = emails - existing
+
+    for email in new_emails:
+        db.add(EmailBlacklist(email=email, reason="批量导入", created_by=admin.username))
+    db.commit()
+    cache.reload()
+
+    return {"message": f"导入完成：{len(new_emails)} 个新增，{len(existing)} 个已存在", "added": len(new_emails), "skipped": len(existing)}
+
+
+@router.get("/admin/blacklist/count")
+def blacklist_count(admin: User = Depends(require_admin)):
+    from core import blacklist as cache
+    return {"count": cache.count()}

@@ -296,6 +296,21 @@ def send_bulk_email(
                 for contact in chunk:
                     recipient = contact["email"]
                     name = contact["name"]
+
+                    # 黑名单检查
+                    from core import blacklist as _bl
+                    if _bl.is_blacklisted(recipient):
+                        logger.info(f"[Async Send] 跳过黑名单: {recipient}")
+                        detail = bg_db.query(SendingJobDetail).filter(
+                            SendingJobDetail.batch_id == batch_id,
+                            SendingJobDetail.recipient == recipient,
+                        ).first()
+                        if detail:
+                            detail.send_status = "Failed"
+                            detail.send_error = "[Blacklisted] 邮箱在黑名单中"
+                        has_failure = True
+                        continue
+
                     try:
                         # 生成退订 token 和 URL
                         unsub_token = generate_unsubscribe_token(recipient, source_email)
@@ -361,16 +376,19 @@ def send_bulk_email(
                     except Exception as e:
                         has_failure = True
                         err_str = str(e)
-                        logger.error(f"[Async Send] 发送失败 {recipient}: {err_str[:200]}")
+                        import re as _re
+                        _m = _re.match(r'An error occurred \(([^)]+)\) when calling the \w+ operation: (.+)', err_str)
+                        short_err = f"[{_m.group(1)}] {_m.group(2)}" if _m else err_str[:200]
+                        logger.error(f"[Async Send] 发送失败 {recipient}: {short_err}")
                         detail = bg_db.query(SendingJobDetail).filter(
                             SendingJobDetail.batch_id == batch_id,
                             SendingJobDetail.recipient == recipient,
                         ).first()
                         if detail:
                             detail.send_status = "Failed"
-                            detail.send_error = err_str[:500]
+                            detail.send_error = short_err
                         if "Throttling" in err_str or "Rate exceeded" in err_str:
-                            error_msg = err_str
+                            error_msg = short_err
                             _time.sleep(2)
 
                 total_sent += len(chunk)

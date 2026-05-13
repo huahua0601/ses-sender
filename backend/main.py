@@ -184,6 +184,11 @@ app.include_router(settings_router)
 app.include_router(sso_router)
 
 
+# --- 启动全局黑名单缓存 ---
+from core import blacklist as _blacklist_cache
+_blacklist_cache.start()
+
+
 # --- SQS 后台轮询线程（替代 Webhook，主动拉取 SES 事件） ---
 import threading
 import json as _json

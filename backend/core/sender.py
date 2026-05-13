@@ -20,6 +20,7 @@ import queue
 import time
 import logging
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -171,11 +172,27 @@ class SenderEngine:
 
         logger.info(f"[Worker-{worker_id}] 已退出")
 
+    @staticmethod
+    def _extract_error(err_str: str) -> str:
+        m = re.match(r'An error occurred \(([^)]+)\) when calling the \w+ operation: (.+)', err_str)
+        if m:
+            return f"[{m.group(1)}] {m.group(2)}"
+        return err_str[:200]
+
     def _send_one(self, task: SendTask, worker_id: int):
         """发送单封邮件"""
         import boto3
         from core.ses import sesv2_client
         from core.config import SES_CONFIGURATION_SET, UNSUBSCRIBE_BASE_URL
+        from core import blacklist as _bl
+
+        # 黑名单检查（内存 Set 查询，O(1)）
+        if _bl.is_blacklisted(task.recipient):
+            logger.info(f"[Worker-{worker_id}] 跳过黑名单邮箱: {task.recipient}")
+            self._update_detail_status(task, "Failed", "[Blacklisted] 邮箱在黑名单中")
+            with self._stats_lock:
+                self._total_errors += 1
+            return
 
         try:
             subject = self._replace_vars(task.subject_tpl, task)
@@ -215,8 +232,9 @@ class SenderEngine:
 
         except Exception as e:
             err_str = str(e)
-            logger.warning(f"[Worker-{worker_id}] 发送失败 {task.recipient}: {err_str[:100]}")
-            self._update_detail_status(task, "Failed", err_str[:500])
+            short_err = self._extract_error(err_str)
+            logger.warning(f"[Worker-{worker_id}] 发送失败 {task.recipient}: {short_err}")
+            self._update_detail_status(task, "Failed", short_err)
 
             with self._stats_lock:
                 self._total_errors += 1
@@ -274,14 +292,74 @@ class SenderEngine:
                 logger.error(f"[Scanner] 异常: {e}")
             time.sleep(5)
 
+    def _enqueue_pending_details(self, db, job) -> bool:
+        """将 job 中 Pending 状态的 detail 构建为 SendTask 并入队。成功返回 True，队列满返回 False。"""
+        from domain.sending.models import SendingJobDetail
+        from domain.audience.models import Contact
+        from domain.template.models import EmailTemplate
+        from core.config import SES_CONFIGURATION_SET, UNSUBSCRIBE_BASE_URL
+        from core.unsubscribe import generate_unsubscribe_token
+
+        details = db.query(SendingJobDetail).filter(
+            SendingJobDetail.batch_id == job.batch_id,
+            SendingJobDetail.send_status == "Pending",
+        ).all()
+
+        tpl = db.query(EmailTemplate).filter(EmailTemplate.user_id == job.user_id).first()
+        subject_tpl = tpl.subject if tpl else job.template_name
+        html_tpl = tpl.html_body if tpl else ""
+
+        from domain.auth.models import User as UserModel
+        job_user = db.query(UserModel).filter(UserModel.id == job.user_id).first()
+        reply_to = (job_user.contact_email if job_user and job_user.contact_email else job.source_email) or job.source_email
+
+        for detail in details:
+            if detail.send_status == "Unsubscribed":
+                continue
+
+            unsub_url = ""
+            if UNSUBSCRIBE_BASE_URL:
+                token = generate_unsubscribe_token(detail.recipient, job.source_email)
+                unsub_url = f"{UNSUBSCRIBE_BASE_URL}/unsubscribe?token={token}"
+
+            attrs = {}
+            contact = db.query(Contact).filter(Contact.email == detail.recipient).first()
+            if contact and contact.attributes:
+                try:
+                    attrs = json.loads(contact.attributes)
+                except Exception:
+                    pass
+
+            task = SendTask(
+                job_id=job.id,
+                batch_id=job.batch_id,
+                recipient=detail.recipient,
+                name=contact.name if contact else "Customer",
+                source_email=job.source_email,
+                reply_to=reply_to,
+                subject_tpl=subject_tpl,
+                html_tpl=html_tpl,
+                text_tpl="",
+                attributes=attrs,
+                config_set=SES_CONFIGURATION_SET or "",
+                tags={
+                    "batch_id": job.batch_id,
+                    "user_id": str(job.user_id),
+                },
+                unsub_url=unsub_url,
+            )
+            try:
+                self.enqueue(task)
+            except Exception:
+                logger.warning(f"[Scanner] 队列满，稍后重试 batch={job.batch_id}")
+                return False
+
+        return True
+
     def _process_queued_jobs(self):
         from core.database import SessionLocal
         from domain.sending.models import SendingJob, SendingJobDetail
-        from domain.audience.models import Contact
-        from domain.template.models import EmailTemplate
-        from domain.sending.models import UnsubscribeRecord
-        from core.config import SES_CONFIGURATION_SET, UNSUBSCRIBE_BASE_URL
-        from core.unsubscribe import generate_unsubscribe_token
+        from core.config import SES_CONFIGURATION_SET
         from datetime import datetime
 
         db = SessionLocal()
@@ -327,78 +405,33 @@ class SenderEngine:
                         job.status = "success"
                     db.commit()
                     logger.info(f"[Scanner] 任务完成 {job.batch_id} → {job.status}")
+                elif self.queue.empty():
+                    # 队列已空但仍有 Pending detail，说明这些 task 丢失了，重新入队
+                    logger.info(f"[Scanner] 重试 {job.batch_id} 剩余 {pending} 封 Pending")
+                    self._enqueue_pending_details(db, job)
 
             jobs = db.query(SendingJob).filter(SendingJob.status == "queued").limit(5).all()
             for job in jobs:
                 job.status = "sending"
                 db.commit()
 
-                details = db.query(SendingJobDetail).filter(
+                pending_count = db.query(SendingJobDetail).filter(
                     SendingJobDetail.batch_id == job.batch_id,
                     SendingJobDetail.send_status == "Pending",
-                ).all()
+                ).count()
 
-                if not details:
+                if pending_count == 0:
                     job.status = "success"
                     job.finished_at = datetime.utcnow()
                     db.commit()
                     continue
 
-                tpl = db.query(EmailTemplate).filter(EmailTemplate.user_id == job.user_id).first()
-                subject_tpl = tpl.subject if tpl else job.template_name
-                html_tpl = tpl.html_body if tpl else ""
+                if not self._enqueue_pending_details(db, job):
+                    job.status = "queued"
+                    db.commit()
+                    return
 
-                from domain.auth.models import User as UserModel
-                job_user = db.query(UserModel).filter(UserModel.id == job.user_id).first()
-                reply_to = (job_user.contact_email if job_user and job_user.contact_email else job.source_email) or job.source_email
-
-                def _ascii_tag(val):
-                    return "".join(c if ord(c) < 128 and c not in ' "\'\\' else "_" for c in str(val))[:256] or "unknown"
-
-                for detail in details:
-                    if detail.send_status == "Unsubscribed":
-                        continue
-
-                    unsub_url = ""
-                    if UNSUBSCRIBE_BASE_URL:
-                        token = generate_unsubscribe_token(detail.recipient, job.source_email)
-                        unsub_url = f"{UNSUBSCRIBE_BASE_URL}/unsubscribe?token={token}"
-
-                    attrs = {}
-                    contact = db.query(Contact).filter(Contact.email == detail.recipient).first()
-                    if contact and contact.attributes:
-                        try:
-                            attrs = json.loads(contact.attributes)
-                        except Exception:
-                            pass
-
-                    task = SendTask(
-                        job_id=job.id,
-                        batch_id=job.batch_id,
-                        recipient=detail.recipient,
-                        name=contact.name if contact else "Customer",
-                        source_email=job.source_email,
-                        reply_to=reply_to,
-                        subject_tpl=subject_tpl,
-                        html_tpl=html_tpl,
-                        text_tpl="",
-                        attributes=attrs,
-                        config_set=SES_CONFIGURATION_SET or "",
-                        tags={
-                            "batch_id": job.batch_id,
-                            "user_id": str(job.user_id),
-                        },
-                        unsub_url=unsub_url,
-                    )
-                    try:
-                        self.enqueue(task)
-                    except Exception:
-                        logger.warning(f"[Scanner] 队列满，稍后重试 batch={job.batch_id}")
-                        job.status = "queued"
-                        db.commit()
-                        return
-
-                logger.info(f"[Scanner] batch={job.batch_id} 已入队 {len(details)} 封, template={job.template_name}, group={job.group_name}, config_set={SES_CONFIGURATION_SET or '(无)'}")
+                logger.info(f"[Scanner] batch={job.batch_id} 已入队 {pending_count} 封, template={job.template_name}, group={job.group_name}, config_set={SES_CONFIGURATION_SET or '(无)'}")
         finally:
             db.close()
 

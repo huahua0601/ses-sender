@@ -379,6 +379,7 @@ const zh: Record<string, string> = {
   "details.template": "模版",
   "details.group": "客群",
   "details.sendStatus": "发送状态",
+  "details.errorReason": "失败原因",
   "details.deliveryStatus": "送达状态",
   "details.openCount": "打开",
   "details.clickCount": "点击",

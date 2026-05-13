@@ -134,7 +134,7 @@ export default function EmailDetails() {
             <td className="py-2.5 px-3"><span className="text-xs text-gray-400 font-mono">{d.batch_id?.slice(0,18)}</span></td>
             <td className="py-2.5 px-3 text-xs text-gray-600">{d.template_name||"—"}</td>
             <td className="py-2.5 px-3 text-xs text-gray-600">{d.group_name||"—"}</td>
-            <td className="py-2.5 px-3">{sendBadge(d.send_status)}</td>
+            <td className="py-2.5 px-3"><span title={d.send_error||""}>{sendBadge(d.send_status)}{d.send_error&&<span className="ml-1 text-red-400 cursor-help" title={d.send_error}>⚠</span>}</span></td>
             <td className="py-2.5 px-3">{delivBadge(d.delivery_status)}</td>
             <td className="py-2.5 px-3 text-center">{d.open_count>0?<span className="text-green-600 font-medium">{t("details.times",{count:d.open_count})}</span>:<span className="text-gray-300">—</span>}</td>
             <td className="py-2.5 px-3 text-center">{d.click_count>0?<span className="text-blue-600 font-medium">{t("details.times",{count:d.click_count})}</span>:<span className="text-gray-300">—</span>}</td>

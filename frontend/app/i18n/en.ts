@@ -379,6 +379,7 @@ const en: Record<string, string> = {
   "details.template": "Template",
   "details.group": "Group",
   "details.sendStatus": "Send Status",
+  "details.errorReason": "Error Reason",
   "details.deliveryStatus": "Delivery Status",
   "details.openCount": "Opens",
   "details.clickCount": "Clicks",
