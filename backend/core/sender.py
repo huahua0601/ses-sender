@@ -181,7 +181,6 @@ class SenderEngine:
 
     def _send_one(self, task: SendTask, worker_id: int):
         """发送单封邮件"""
-        import boto3
         from core.ses import sesv2_client
         from core.config import SES_CONFIGURATION_SET, UNSUBSCRIBE_BASE_URL
         from core import blacklist as _bl
