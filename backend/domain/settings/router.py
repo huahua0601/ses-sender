@@ -202,17 +202,29 @@ async def upload_blacklist(file: UploadFile = File(...), admin: User = Depends(r
     from core import blacklist as cache
 
     contents = await file.read()
-    text = contents.decode("utf-8", errors="ignore")
-
+    filename = (file.filename or "").lower()
     emails = set()
-    for line in text.splitlines():
-        line = line.strip().strip(",").strip(";").lower()
-        if "@" in line and "." in line:
-            parts = line.split(",")
-            for p in parts:
-                p = p.strip()
-                if "@" in p and "." in p and len(p) < 255:
-                    emails.add(p)
+
+    if filename.endswith(".xlsx") or filename.endswith(".xls"):
+        import io, openpyxl
+        wb = openpyxl.load_workbook(io.BytesIO(contents), read_only=True)
+        ws = wb.active
+        for row in ws.iter_rows(min_row=1, values_only=True):
+            for cell in row:
+                if cell and isinstance(cell, str):
+                    v = cell.strip().lower()
+                    if "@" in v and "." in v and len(v) < 255:
+                        emails.add(v)
+    else:
+        text = contents.decode("utf-8", errors="ignore")
+        for line in text.splitlines():
+            line = line.strip().strip(",").strip(";").lower()
+            if "@" in line and "." in line:
+                parts = line.split(",")
+                for p in parts:
+                    p = p.strip()
+                    if "@" in p and "." in p and len(p) < 255:
+                        emails.add(p)
 
     if not emails:
         raise HTTPException(status_code=400, detail="未识别到有效邮箱地址")
@@ -232,3 +244,27 @@ async def upload_blacklist(file: UploadFile = File(...), admin: User = Depends(r
 def blacklist_count(admin: User = Depends(require_admin)):
     from core import blacklist as cache
     return {"count": cache.count()}
+
+
+@router.get("/admin/blacklist/template")
+def download_blacklist_template():
+    import io
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "黑名单模板"
+    ws.append(["email", "reason"])
+    ws.append(["example@domain.com", "硬退信"])
+    ws.append(["invalid@test.com", "无效邮箱"])
+    ws.column_dimensions["A"].width = 30
+    ws.column_dimensions["B"].width = 20
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="blacklist_template.xlsx"'},
+    )

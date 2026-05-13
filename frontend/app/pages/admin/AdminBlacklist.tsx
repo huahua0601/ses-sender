@@ -98,9 +98,10 @@ export default function AdminBlacklist() {
           <Btn size="sm" variant="outline" className="whitespace-nowrap" onClick={() => fileRef.current?.click()} disabled={uploading}>
             {uploading ? "导入中..." : "📄 批量导入"}
           </Btn>
-          <input ref={fileRef} type="file" accept=".txt,.csv" className="hidden" onChange={doUpload} />
+          <input ref={fileRef} type="file" accept=".txt,.csv,.xlsx" className="hidden" onChange={doUpload} />
         </label>
-        {selected.length > 0 && <Btn size="sm" variant="warning" onClick={doBatchDelete}>删除选中({selected.length})</Btn>}
+        <Btn size="sm" variant="outline" className="whitespace-nowrap" onClick={() => { const a=document.createElement("a");a.href=`${API}/admin/blacklist/template`;a.download="blacklist_template.xlsx";a.click(); }}>📥 模板</Btn>
+        {selected.length > 0 && <Btn size="sm" variant="warning" className="whitespace-nowrap" onClick={doBatchDelete}>删除选中({selected.length})</Btn>}
       </div>
     }>
       <div className="text-xs text-gray-400 mb-3">黑名单中的邮箱在所有用户发送时会被自动拒绝。支持 .txt/.csv 文件批量导入（每行一个邮箱）。</div>
