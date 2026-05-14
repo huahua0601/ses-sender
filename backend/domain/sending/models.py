@@ -10,6 +10,7 @@ class SendingJob(Base):
     user_id = Column(Integer, index=True)
     batch_id = Column(String(64), unique=True, index=True)     # 唯一批次标识（用于 VDM Tag）
     template_name = Column(String(255))                         # 模版名称
+    template_id = Column(Integer, nullable=True)                  # 模版 ID
     group_name = Column(String(255))                            # 客群名称
     source_email = Column(String(255))                          # 发送邮箱
     reply_to = Column(String(255), nullable=True)               # 收件邮箱（回复地址）

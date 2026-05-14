@@ -304,7 +304,14 @@ class SenderEngine:
             SendingJobDetail.send_status == "Pending",
         ).all()
 
-        tpl = db.query(EmailTemplate).filter(EmailTemplate.user_id == job.user_id).first()
+        tpl = None
+        if job.template_id:
+            tpl = db.query(EmailTemplate).filter(EmailTemplate.id == job.template_id).first()
+        if not tpl:
+            tpl = db.query(EmailTemplate).filter(
+                EmailTemplate.user_id == job.user_id,
+                EmailTemplate.name == job.template_name,
+            ).first()
         subject_tpl = tpl.subject if tpl else job.template_name
         html_tpl = tpl.html_body if tpl else ""
 
