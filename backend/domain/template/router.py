@@ -1,5 +1,5 @@
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 
 from core.database import get_db
@@ -74,3 +74,85 @@ def admin_update_template(template_id: int, data: TemplateUpdate, admin: User = 
 @router.delete("/admin/templates/{template_id}")
 def admin_delete_template(template_id: int, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
     return service.delete_template(db, template_id, admin.id)
+
+
+# ========== 模板附件管理 ==========
+import os
+import uuid as _uuid
+import mimetypes
+
+ATTACHMENT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "uploads", "attachments")
+MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024  # 10MB
+MAX_ATTACHMENTS_PER_TEMPLATE = 5
+
+
+def _get_user_template(db: Session, template_id: int, user_id: int):
+    from domain.template.models import EmailTemplate
+    tpl = db.query(EmailTemplate).filter(EmailTemplate.id == template_id, EmailTemplate.user_id == user_id).first()
+    if not tpl:
+        raise HTTPException(status_code=404, detail="模版不存在")
+    return tpl
+
+
+@router.get("/user/templates/{template_id}/attachments")
+def list_attachments(template_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    _get_user_template(db, template_id, current_user.id)
+    from domain.template.models import TemplateAttachment
+    rows = db.query(TemplateAttachment).filter(TemplateAttachment.template_id == template_id).order_by(TemplateAttachment.id).all()
+    return [{"id": r.id, "file_name": r.file_name, "content_type": r.content_type, "file_size": r.file_size, "created_at": r.created_at.isoformat() if r.created_at else None} for r in rows]
+
+
+@router.post("/user/templates/{template_id}/attachments")
+async def upload_attachment(template_id: int, file: UploadFile = File(...), current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    _get_user_template(db, template_id, current_user.id)
+    from domain.template.models import TemplateAttachment
+
+    existing_count = db.query(TemplateAttachment).filter(TemplateAttachment.template_id == template_id).count()
+    if existing_count >= MAX_ATTACHMENTS_PER_TEMPLATE:
+        raise HTTPException(status_code=400, detail=f"每个模板最多 {MAX_ATTACHMENTS_PER_TEMPLATE} 个附件")
+
+    contents = await file.read()
+    if len(contents) > MAX_ATTACHMENT_SIZE:
+        raise HTTPException(status_code=400, detail=f"附件大小不能超过 10MB，当前 {len(contents)/1024/1024:.1f}MB")
+
+    tpl_dir = os.path.join(ATTACHMENT_DIR, str(template_id))
+    os.makedirs(tpl_dir, exist_ok=True)
+
+    ext = os.path.splitext(file.filename or "file")[1]
+    stored_name = f"{_uuid.uuid4().hex[:12]}{ext}"
+    file_path = os.path.join(tpl_dir, stored_name)
+
+    with open(file_path, "wb") as fp:
+        fp.write(contents)
+
+    content_type = file.content_type or mimetypes.guess_type(file.filename or "")[0] or "application/octet-stream"
+
+    att = TemplateAttachment(
+        template_id=template_id,
+        file_name=file.filename or "attachment",
+        file_path=file_path,
+        content_type=content_type,
+        file_size=len(contents),
+    )
+    db.add(att)
+    db.commit()
+    db.refresh(att)
+
+    return {"id": att.id, "file_name": att.file_name, "content_type": att.content_type, "file_size": att.file_size}
+
+
+@router.delete("/user/templates/{template_id}/attachments/{att_id}")
+def delete_attachment(template_id: int, att_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    _get_user_template(db, template_id, current_user.id)
+    from domain.template.models import TemplateAttachment
+
+    att = db.query(TemplateAttachment).filter(TemplateAttachment.id == att_id, TemplateAttachment.template_id == template_id).first()
+    if not att:
+        raise HTTPException(status_code=404, detail="附件不存在")
+
+    if att.file_path and os.path.exists(att.file_path):
+        os.remove(att.file_path)
+
+    db.delete(att)
+    db.commit()
+    return {"message": "附件已删除"}

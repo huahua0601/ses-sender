@@ -15,3 +15,15 @@ class EmailTemplate(Base):
     text_body = Column(Text)                             # 纯文本内容
     user_id = Column(Integer, ForeignKey("users.id"))
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class TemplateAttachment(Base):
+    __tablename__ = "template_attachments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    template_id = Column(Integer, index=True)
+    file_name = Column(String(255))
+    file_path = Column(String(500))
+    content_type = Column(String(128))
+    file_size = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)

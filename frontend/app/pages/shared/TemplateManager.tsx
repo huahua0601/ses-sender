@@ -127,6 +127,9 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
   const [showEvalPanel,setShowEvalPanel]=useState(false);
   const [evalModels,setEvalModels]=useState<string[]>([]);
   const [evalTab,setEvalTab]=useState(0);
+  const [showLinkModal,setShowLinkModal]=useState(false);
+  const [linkUrl,setLinkUrl]=useState("https://");
+  const [linkText,setLinkText]=useState("");
   const [fixLoading,setFixLoading]=useState("");
   const [fixResults,setFixResults]=useState<Record<string,any>>({});
 
@@ -353,6 +356,18 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
       </div>
     </div>
 
+    {/* 插入超链接弹窗 */}
+    <Modal open={showLinkModal} onClose={()=>setShowLinkModal(false)} title="插入超链接" width={420}>
+      <div className="space-y-4">
+        <div><label className="text-sm font-medium text-gray-700 mb-1.5 block">链接地址 (URL)</label><Input value={linkUrl} onChange={(e:any)=>setLinkUrl(e.target.value)} placeholder="https://example.com"/></div>
+        <div><label className="text-sm font-medium text-gray-700 mb-1.5 block">链接文字</label><Input value={linkText} onChange={(e:any)=>setLinkText(e.target.value)} placeholder="点击这里"/></div>
+        <div className="flex justify-end gap-2">
+          <Btn variant="outline" onClick={()=>setShowLinkModal(false)}>取消</Btn>
+          <Btn onClick={()=>{if(!linkUrl||linkUrl==="https://")return;const text=linkText||linkUrl;insertSnippet(`<a href="${linkUrl}" style="color:#6366f1;text-decoration:underline;">${text}</a>`);setShowLinkModal(false);}}>插入</Btn>
+        </div>
+      </div>
+    </Modal>
+
     {/* AI 优化结果（弹窗） */}
     <Modal open={showAi} onClose={()=>setShowAi(false)} title={t("ai.suggestions")} width={1000}>
       {aiResult&&<div className="space-y-4 max-h-[70vh] overflow-y-auto">
@@ -515,6 +530,10 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
               className="px-2 py-1 text-xs bg-red-50 border border-red-200 rounded-md hover:bg-red-100 transition-all text-red-600">
               {t("template.unsubLink")}
             </button>
+            <button onClick={()=>{setLinkUrl("https://");setLinkText("");setShowLinkModal(true);}}
+              className="px-2 py-1 text-xs bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 transition-all text-blue-600">
+              🔗 超链接
+            </button>
             <span className="w-px h-5 bg-gray-200 mx-1"/>
             <span className="text-xs text-gray-400 mr-1">{t("template.toolbar.variables")}</span>
             {variables.map(v=>(
@@ -560,5 +579,72 @@ export default function TemplateManager({apiPrefix}:{apiPrefix:string}) {
         </div>
       </div>
     </Card>
+
+    {/* 附件管理（编辑模式，放在页面底部） */}
+    {!isCreate && editId && <AttachmentSection templateId={editId} apiPrefix={apiPrefix} token={token} />}
+  </div>;
+}
+
+
+function AttachmentSection({templateId, apiPrefix, token}: {templateId: number; apiPrefix: string; token: string}) {
+  const [attachments, setAttachments] = useState<any[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const {toast} = useToast();
+
+  const load = async () => {
+    const r = await fetch(`${API}/user/templates/${templateId}/attachments`, {headers: authH(token)});
+    if (r.ok) setAttachments(await r.json());
+  };
+  useEffect(() => { load(); }, [templateId]);
+
+  const upload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) { toast("error", "附件大小不能超过 10MB"); return; }
+    setUploading(true);
+    const form = new FormData();
+    form.append("file", file);
+    try {
+      const r = await fetch(`${API}/user/templates/${templateId}/attachments`, {method: "POST", headers: {Authorization: `Bearer ${token}`}, body: form});
+      if (r.ok) { toast("success", "附件已上传"); load(); }
+      else { const d = await r.json(); toast("error", d.detail); }
+    } catch { toast("error", "上传失败"); }
+    finally { setUploading(false); if (fileRef.current) fileRef.current.value = ""; }
+  };
+
+  const remove = async (id: number) => {
+    const r = await fetch(`${API}/user/templates/${templateId}/attachments/${id}`, {method: "DELETE", headers: authH(token)});
+    if (r.ok) { toast("success", "已删除"); load(); }
+  };
+
+  const fmtSize = (bytes: number) => bytes < 1024 ? `${bytes}B` : bytes < 1048576 ? `${(bytes/1024).toFixed(1)}KB` : `${(bytes/1048576).toFixed(1)}MB`;
+
+  return <div className="bg-white border border-gray-100 rounded-xl p-4">
+    <div className="flex items-center justify-between mb-3">
+      <h3 className="text-sm font-semibold text-gray-700">📎 附件（{attachments.length}/5）</h3>
+      <label>
+        <Btn size="sm" variant="outline" className="whitespace-nowrap" onClick={() => fileRef.current?.click()} disabled={uploading || attachments.length >= 5}>
+          {uploading ? "上传中..." : "+ 添加附件"}
+        </Btn>
+        <input ref={fileRef} type="file" className="hidden" onChange={upload} />
+      </label>
+    </div>
+    {attachments.length === 0 ? (
+      <p className="text-xs text-gray-400">暂无附件，发送邮件时不会携带附件。单个附件最大 10MB。</p>
+    ) : (
+      <div className="space-y-2">
+        {attachments.map(att => (
+          <div key={att.id} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-gray-400">📄</span>
+              <span className="text-sm text-gray-700 truncate">{att.file_name}</span>
+              <span className="text-xs text-gray-400 flex-shrink-0">{fmtSize(att.file_size)}</span>
+            </div>
+            <button onClick={() => remove(att.id)} className="text-red-400 hover:text-red-600 text-xs flex-shrink-0 ml-2">删除</button>
+          </div>
+        ))}
+      </div>
+    )}
   </div>;
 }

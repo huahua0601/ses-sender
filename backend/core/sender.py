@@ -21,6 +21,7 @@ import time
 import logging
 import json
 import re
+import os
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -43,6 +44,7 @@ class SendTask:
     config_set: str = ""
     tags: dict = field(default_factory=dict)
     unsub_url: str = ""
+    attachments: list = field(default_factory=list)
 
 
 class SlidingWindow:
@@ -221,6 +223,22 @@ class SenderEngine:
             if headers:
                 email_params["Content"]["Simple"]["Headers"] = headers
 
+            if task.attachments:
+                att_list = []
+                for att in task.attachments:
+                    file_path = att["file_path"]
+                    if os.path.exists(file_path):
+                        with open(file_path, "rb") as fp:
+                            att_list.append({
+                                "RawContent": fp.read(),
+                                "FileName": att["file_name"],
+                                "ContentType": att["content_type"],
+                                "ContentDisposition": "ATTACHMENT",
+                                "ContentTransferEncoding": "BASE64",
+                            })
+                if att_list:
+                    email_params["Content"]["Simple"]["Attachments"] = att_list
+
             response = sesv2_client.send_email(**email_params)
             message_id = response.get("MessageId", "")
 
@@ -294,8 +312,8 @@ class SenderEngine:
     def _enqueue_pending_details(self, db, job) -> bool:
         """将 job 中 Pending 状态的 detail 构建为 SendTask 并入队。成功返回 True，队列满返回 False。"""
         from domain.sending.models import SendingJobDetail
-        from domain.audience.models import Contact
-        from domain.template.models import EmailTemplate
+        from domain.audience.models import Contact, ContactGroup
+        from domain.template.models import EmailTemplate, TemplateAttachment
         from core.config import SES_CONFIGURATION_SET, UNSUBSCRIBE_BASE_URL
         from core.unsubscribe import generate_unsubscribe_token
 
@@ -315,9 +333,24 @@ class SenderEngine:
         subject_tpl = tpl.subject if tpl else job.template_name
         html_tpl = tpl.html_body if tpl else ""
 
+        # 加载模板附件
+        tpl_attachments = []
+        if tpl:
+            att_rows = db.query(TemplateAttachment).filter(TemplateAttachment.template_id == tpl.id).all()
+            for a in att_rows:
+                tpl_attachments.append({"file_name": a.file_name, "file_path": a.file_path, "content_type": a.content_type})
+
         from domain.auth.models import User as UserModel
         job_user = db.query(UserModel).filter(UserModel.id == job.user_id).first()
         reply_to = (job_user.contact_email if job_user and job_user.contact_email else job.source_email) or job.source_email
+
+        job_group_id = job.group_id
+        if not job_group_id:
+            job_group = db.query(ContactGroup).filter(
+                ContactGroup.user_id == job.user_id,
+                ContactGroup.name == job.group_name,
+            ).first()
+            job_group_id = job_group.id if job_group else None
 
         for detail in details:
             if detail.send_status == "Unsubscribed":
@@ -329,7 +362,11 @@ class SenderEngine:
                 unsub_url = f"{UNSUBSCRIBE_BASE_URL}/unsubscribe?token={token}"
 
             attrs = {}
-            contact = db.query(Contact).filter(Contact.email == detail.recipient).first()
+            contact = None
+            if job_group_id:
+                contact = db.query(Contact).filter(Contact.email == detail.recipient, Contact.group_id == job_group_id).first()
+            if not contact:
+                contact = db.query(Contact).filter(Contact.email == detail.recipient).first()
             if contact and contact.attributes:
                 try:
                     attrs = json.loads(contact.attributes)
@@ -353,6 +390,7 @@ class SenderEngine:
                     "user_id": str(job.user_id),
                 },
                 unsub_url=unsub_url,
+                attachments=tpl_attachments,
             )
             try:
                 self.enqueue(task)
@@ -411,10 +449,6 @@ class SenderEngine:
                         job.status = "success"
                     db.commit()
                     logger.info(f"[Scanner] 任务完成 {job.batch_id} → {job.status}")
-                elif self.queue.empty():
-                    # 队列已空但仍有 Pending detail，说明这些 task 丢失了，重新入队
-                    logger.info(f"[Scanner] 重试 {job.batch_id} 剩余 {pending} 封 Pending")
-                    self._enqueue_pending_details(db, job)
 
             jobs = db.query(SendingJob).filter(SendingJob.status == "queued").limit(5).all()
             for job in jobs:

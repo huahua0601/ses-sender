@@ -226,6 +226,7 @@ def send_bulk_email(
         template_name=tpl_name,
         template_id=template_id,
         group_name=group_name,
+        group_id=group_id,
         source_email=source_email,
         reply_to=reply_to_email,
         total_contacts=len(contact_list),

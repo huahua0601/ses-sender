@@ -12,6 +12,7 @@ class SendingJob(Base):
     template_name = Column(String(255))                         # 模版名称
     template_id = Column(Integer, nullable=True)                  # 模版 ID
     group_name = Column(String(255))                            # 客群名称
+    group_id = Column(Integer, nullable=True)                     # 客群 ID
     source_email = Column(String(255))                          # 发送邮箱
     reply_to = Column(String(255), nullable=True)               # 收件邮箱（回复地址）
     total_contacts = Column(Integer, default=0)                 # 联系人总数
