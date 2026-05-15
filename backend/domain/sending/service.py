@@ -238,7 +238,7 @@ def send_bulk_email(
         group_id=group_id,
         source_email=source_email,
         reply_to=reply_to_email,
-        total_contacts=len(contact_list),
+        total_contacts=len(active_contacts) + len(skipped_contacts),
         sent_count=0,
         total_batches=0,
         status="queued",
