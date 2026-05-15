@@ -45,6 +45,7 @@ class SendTask:
     tags: dict = field(default_factory=dict)
     unsub_url: str = ""
     attachments: list = field(default_factory=list)
+    detail_id: int = 0
 
 
 class SlidingWindow:
@@ -196,6 +197,25 @@ class SenderEngine:
             return
 
         try:
+            # 发送前检查 detail 是否仍为 Pending，防止重复发送
+            from core.database import SessionLocal as _CheckSession
+            from domain.sending.models import SendingJobDetail as _CheckDetail
+            _cdb = _CheckSession()
+            try:
+                if task.detail_id:
+                    _d = _cdb.query(_CheckDetail).filter(_CheckDetail.id == task.detail_id).first()
+                else:
+                    _d = _cdb.query(_CheckDetail).filter(
+                        _CheckDetail.batch_id == task.batch_id,
+                        _CheckDetail.recipient == task.recipient,
+                        _CheckDetail.send_status == "Pending",
+                    ).first()
+                if _d and _d.send_status != "Pending":
+                    logger.debug(f"[Worker-{worker_id}] 跳过已处理: {task.recipient} status={_d.send_status}")
+                    return
+            finally:
+                _cdb.close()
+
             subject = self._replace_vars(task.subject_tpl, task)
             html_body = self._replace_vars(task.html_tpl, task)
 
@@ -272,26 +292,30 @@ class SenderEngine:
         return result
 
     def _update_detail_status(self, task: SendTask, status: str, error: str = "", message_id: str = ""):
-        """更新 sending_job_details 表"""
+        """更新 sending_job_details 表（同一 batch 中相同邮箱的所有记录一起更新）"""
         try:
             from core.database import SessionLocal
             from domain.sending.models import SendingJobDetail, SendingJob
             db = SessionLocal()
             try:
-                detail = db.query(SendingJobDetail).filter(
+                # 更新同一 batch 中该邮箱的所有 detail 记录
+                details = db.query(SendingJobDetail).filter(
                     SendingJobDetail.batch_id == task.batch_id,
                     SendingJobDetail.recipient == task.recipient,
-                ).first()
-                if detail:
+                    SendingJobDetail.send_status == "Pending",
+                ).all()
+                updated_count = 0
+                for detail in details:
                     detail.send_status = status
                     if error:
                         detail.send_error = error
                     if message_id:
                         detail.message_id = message_id
+                    updated_count += 1
 
                 job = db.query(SendingJob).filter(SendingJob.batch_id == task.batch_id).first()
                 if job:
-                    job.sent_count = (job.sent_count or 0) + 1
+                    job.sent_count = (job.sent_count or 0) + updated_count
 
                 db.commit()
             finally:
@@ -391,6 +415,7 @@ class SenderEngine:
                 },
                 unsub_url=unsub_url,
                 attachments=tpl_attachments,
+                detail_id=detail.id,
             )
             try:
                 self.enqueue(task)
@@ -467,8 +492,7 @@ class SenderEngine:
                     continue
 
                 if not self._enqueue_pending_details(db, job):
-                    job.status = "queued"
-                    db.commit()
+                    logger.warning(f"[Scanner] 队列满，batch={job.batch_id} 保持 sending 状态等待下轮处理")
                     return
 
                 logger.info(f"[Scanner] batch={job.batch_id} 已入队 {pending_count} 封, template={job.template_name}, group={job.group_name}, config_set={SES_CONFIGURATION_SET or '(无)'}")

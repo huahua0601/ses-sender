@@ -209,6 +209,15 @@ def send_bulk_email(
     active_contacts = [c for c in contact_list if c["email"] not in unsub_emails]
     skipped_contacts = [c for c in contact_list if c["email"] in unsub_emails]
 
+    # 按邮箱去重（同一邮箱在客群中出现多次只发送一次）
+    seen_emails = set()
+    deduped_active = []
+    for c in active_contacts:
+        if c["email"] not in seen_emails:
+            seen_emails.add(c["email"])
+            deduped_active.append(c)
+    active_contacts = deduped_active
+
     # 获取模板的 HTML 和 Subject 用于 sesv2 发送
     tpl_subject = tpl.subject if tpl else "No Subject"
     tpl_html = tpl.html_body if tpl else ""
